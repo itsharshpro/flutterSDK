@@ -9,6 +9,7 @@ import 'irctc_railtel_sdk.dart';
 import 'face_rd_service.dart';
 
 /// Main verification screen that handles the entire flow
+/// Matches Android SDK flow: Aadhaar Entry → Method Selection → Verification → Result
 class VerificationScreen extends StatefulWidget {
   final String? aadhaarNumber;
   
@@ -26,6 +27,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
   String? _transactionId;
   bool _isLoading = false;
   String? _error;
+  VerificationMethod? _verificationMethod;
   
   // Controllers
   final _aadhaar1 = TextEditingController();
@@ -34,28 +36,55 @@ class _VerificationScreenState extends State<VerificationScreen> {
   final List<TextEditingController> _otpControllers = 
       List.generate(6, (_) => TextEditingController());
   
+  // Focus nodes for auto-jump
+  final _focus1 = FocusNode();
+  final _focus2 = FocusNode();
+  final _focus3 = FocusNode();
+  
   @override
   void initState() {
     super.initState();
     if (widget.aadhaarNumber != null && widget.aadhaarNumber!.length == 12) {
       _aadhaarNumber = widget.aadhaarNumber;
-      _currentStep = _Step.methodSelection;
+      _aadhaar1.text = widget.aadhaarNumber!.substring(0, 4);
+      _aadhaar2.text = widget.aadhaarNumber!.substring(4, 8);
+      _aadhaar3.text = widget.aadhaarNumber!.substring(8, 12);
+      // Skip to method selection if Aadhaar provided
+      _goToMethodSelectionOrFaceAuth();
+    }
+  }
+  
+  void _goToMethodSelectionOrFaceAuth() {
+    final config = IRCTCRailtelSDK.config;
+    if (config.enableOtp) {
+      setState(() => _currentStep = _Step.methodSelection);
+    } else {
+      // Skip directly to Face Auth if OTP not enabled
+      _selectFaceRD();
     }
   }
   
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_getTitle()),
-        backgroundColor: const Color(0xFF1976D2),
-        foregroundColor: Colors.white,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: _handleBack,
+    return WillPopScope(
+      onWillPop: () async {
+        _handleBack();
+        return false;
+      },
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          title: Text(_getTitle()),
+          backgroundColor: const Color(0xFF1976D2),
+          foregroundColor: Colors.white,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: _handleBack,
+          ),
         ),
+        body: _buildBody(),
       ),
-      body: _buildBody(),
     );
   }
   
@@ -65,6 +94,8 @@ class _VerificationScreenState extends State<VerificationScreen> {
         return 'Enter Aadhaar Number';
       case _Step.methodSelection:
         return 'Choose Verification Method';
+      case _Step.faceAuth:
+        return 'Face Authentication';
       case _Step.otpVerification:
         return 'OTP Verification';
       case _Step.result:
@@ -74,7 +105,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
   
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return _buildLoadingScreen();
     }
     
     switch (_currentStep) {
@@ -82,6 +113,8 @@ class _VerificationScreenState extends State<VerificationScreen> {
         return _buildAadhaarEntry();
       case _Step.methodSelection:
         return _buildMethodSelection();
+      case _Step.faceAuth:
+        return _buildFaceAuth();
       case _Step.otpVerification:
         return _buildOtpVerification();
       case _Step.result:
@@ -89,65 +122,157 @@ class _VerificationScreenState extends State<VerificationScreen> {
     }
   }
   
-  Widget _buildAadhaarEntry() {
-    return Padding(
-      padding: const EdgeInsets.all(24),
+  Widget _buildLoadingScreen() {
+    return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Text(
-            'Enter your 12-digit Aadhaar Number',
-            style: TextStyle(fontSize: 16),
+          const CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1976D2)),
           ),
           const SizedBox(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _buildAadhaarField(_aadhaar1, _aadhaar2),
-              const Text(' - ', style: TextStyle(fontSize: 24)),
-              _buildAadhaarField(_aadhaar2, _aadhaar3, _aadhaar1),
-              const Text(' - ', style: TextStyle(fontSize: 24)),
-              _buildAadhaarField(_aadhaar3, null, _aadhaar2),
-            ],
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 16),
-            Text(_error!, style: const TextStyle(color: Colors.red)),
-          ],
-          const SizedBox(height: 32),
-          ElevatedButton(
-            onPressed: _proceedFromAadhaar,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1976D2),
-              foregroundColor: Colors.white,
-              minimumSize: const Size(200, 50),
+          Text(
+            _currentStep == _Step.faceAuth 
+                ? 'Processing Face Authentication...' 
+                : 'Please wait...',
+            style: const TextStyle(
+              fontSize: 16,
+              color: Colors.grey,
             ),
-            child: const Text('Proceed'),
           ),
         ],
       ),
     );
   }
   
+  // ==================== AADHAAR ENTRY SCREEN ====================
+  Widget _buildAadhaarEntry() {
+    return Column(
+      children: [
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Icon
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1976D2).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(50),
+                  ),
+                  child: const Icon(
+                    Icons.credit_card,
+                    size: 48,
+                    color: Color(0xFF1976D2),
+                  ),
+                ),
+                const SizedBox(height: 32),
+                const Text(
+                  'Enter your 12-digit Aadhaar Number',
+                  style: TextStyle(fontSize: 16, color: Color(0xFF333333)),
+                ),
+                const SizedBox(height: 24),
+                
+                // Aadhaar Input Fields
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _buildAadhaarField(_aadhaar1, _focus1, _focus2, null),
+                    const Text(' - ', style: TextStyle(fontSize: 24, color: Color(0xFF666666))),
+                    _buildAadhaarField(_aadhaar2, _focus2, _focus3, _focus1),
+                    const Text(' - ', style: TextStyle(fontSize: 24, color: Color(0xFF666666))),
+                    _buildAadhaarField(_aadhaar3, _focus3, null, _focus2),
+                  ],
+                ),
+                
+                // Error message
+                if (_error != null) ...[
+                  const SizedBox(height: 16),
+                  Text(_error!, style: const TextStyle(color: Color(0xFFD32F2F), fontSize: 14)),
+                ],
+              ],
+            ),
+          ),
+        ),
+        
+        // Buttons
+        Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: [
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: _proceedFromAadhaar,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1976D2),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text('Proceed', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(VerificationResult.cancelled()),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF757575),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text('Cancel', style: TextStyle(fontSize: 16)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+  
   Widget _buildAadhaarField(
     TextEditingController controller,
-    TextEditingController? next, [
-    TextEditingController? previous,
-  ]) {
+    FocusNode focusNode,
+    FocusNode? nextFocus,
+    FocusNode? previousFocus,
+  ) {
     return SizedBox(
       width: 80,
       child: TextField(
         controller: controller,
+        focusNode: focusNode,
         maxLength: 4,
         keyboardType: TextInputType.number,
         textAlign: TextAlign.center,
-        decoration: const InputDecoration(
+        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+        decoration: InputDecoration(
           counterText: '',
-          border: OutlineInputBorder(),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Color(0xFFBDBDBD)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Color(0xFF1976D2), width: 2),
+          ),
+          contentPadding: const EdgeInsets.symmetric(vertical: 16),
         ),
         onChanged: (value) {
-          if (value.length == 4 && next != null) {
-            FocusScope.of(context).nextFocus();
+          if (value.length == 4 && nextFocus != null) {
+            nextFocus.requestFocus();
+          }
+          if (value.isEmpty && previousFocus != null) {
+            previousFocus.requestFocus();
           }
           setState(() => _error = null);
         },
@@ -155,35 +280,58 @@ class _VerificationScreenState extends State<VerificationScreen> {
     );
   }
   
+  // ==================== METHOD SELECTION SCREEN ====================
   Widget _buildMethodSelection() {
-    final config = IRCTCRailtelSDK.config;
-    
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Text('Select a verification method', style: TextStyle(fontSize: 16)),
           const SizedBox(height: 32),
+          const Text(
+            'How would you like to verify your identity?',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: Color(0xFF333333)),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Select a verification method',
+            style: TextStyle(fontSize: 14, color: Colors.grey),
+          ),
+          const SizedBox(height: 40),
           
-          // Show OTP option only if enabled in config
-          if (config.enableOtp) ...[
-            _buildMethodCard(
-              icon: Icons.sms,
-              title: 'OTP Verification',
-              subtitle: 'Receive OTP on Aadhaar-linked mobile',
-              onTap: _selectOtp,
-            ),
-            const SizedBox(height: 16),
-          ],
-          
-          // Face RD is always available
+          // OTP Option
           _buildMethodCard(
-            icon: Icons.face,
+            icon: Icons.sms_outlined,
+            title: 'OTP Verification',
+            subtitle: 'Receive OTP on Aadhaar-linked mobile number',
+            onTap: _selectOtp,
+          ),
+          const SizedBox(height: 16),
+          
+          // Face RD Option
+          _buildMethodCard(
+            icon: Icons.face_outlined,
             title: 'Face Authentication',
-            subtitle: 'Verify using Face RD biometrics',
+            subtitle: 'Verify using Face RD biometric recognition',
             onTap: _selectFaceRD,
-            enabled: true,
+          ),
+          
+          const Spacer(),
+          
+          // Cancel button
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: OutlinedButton(
+              onPressed: () => Navigator.of(context).pop(VerificationResult.cancelled()),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Color(0xFF757575)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Text('Cancel', style: TextStyle(fontSize: 16, color: Color(0xFF757575))),
+            ),
           ),
         ],
       ),
@@ -194,123 +342,110 @@ class _VerificationScreenState extends State<VerificationScreen> {
     required IconData icon,
     required String title,
     required String subtitle,
-    required VoidCallback? onTap,
-    bool enabled = true,
+    required VoidCallback onTap,
   }) {
-    return Card(
-      child: ListTile(
-        leading: Icon(icon, size: 40, color: enabled ? const Color(0xFF1976D2) : Colors.grey),
-        title: Text(title, style: TextStyle(color: enabled ? null : Colors.grey)),
-        subtitle: Text(subtitle),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: enabled ? onTap : null,
-        enabled: enabled,
+    return Material(
+      elevation: 2,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1976D2).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, size: 32, color: const Color(0xFF1976D2)),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 4),
+                    Text(subtitle, style: const TextStyle(fontSize: 13, color: Colors.grey)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Colors.grey),
+            ],
+          ),
+        ),
       ),
     );
   }
   
-  Widget _buildOtpVerification() {
+  // ==================== FACE AUTH SCREEN ====================
+  Widget _buildFaceAuth() {
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Text('Enter OTP sent to', style: TextStyle(fontSize: 16)),
-          Text(
-            _maskedMobile ?? 'Aadhaar registered mobile',
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1976D2).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(100),
+            ),
+            child: const Icon(
+              Icons.face,
+              size: 80,
               color: Color(0xFF1976D2),
             ),
           ),
           const SizedBox(height: 32),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: List.generate(6, (i) => SizedBox(
-              width: 45,
-              child: TextField(
-                controller: _otpControllers[i],
-                maxLength: 1,
-                keyboardType: TextInputType.number,
-                textAlign: TextAlign.center,
-                decoration: const InputDecoration(
-                  counterText: '',
-                  border: OutlineInputBorder(),
-                ),
-                onChanged: (value) {
-                  if (value.isNotEmpty && i < 5) {
-                    FocusScope.of(context).nextFocus();
-                  }
-                  setState(() => _error = null);
-                },
-              ),
-            )),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 16),
-            Text(_error!, style: const TextStyle(color: Colors.red)),
-          ],
-          const SizedBox(height: 24),
-          TextButton(
-            onPressed: _sendOtp,
-            child: const Text('Resend OTP'),
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: _verifyOtp,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1976D2),
-              foregroundColor: Colors.white,
-              minimumSize: const Size(200, 50),
-            ),
-            child: const Text('Verify'),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  Widget _buildResult() {
-    final isSuccess = _error == null;
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            isSuccess ? Icons.check_circle : Icons.cancel,
-            size: 100,
-            color: isSuccess ? Colors.green : Colors.red,
-          ),
-          const SizedBox(height: 24),
-          Text(
-            isSuccess ? 'Verification Successful' : 'Verification Failed',
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          const Text(
+            'Face Authentication',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
-          Text(
-            isSuccess 
-                ? 'Your identity has been verified successfully.'
-                : _error ?? 'Verification could not be completed.',
+          const Text(
+            'Position your face within the frame and follow the on-screen instructions',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.grey),
+            style: TextStyle(fontSize: 14, color: Colors.grey, height: 1.5),
           ),
-          if (isSuccess && _transactionId != null) ...[
-            const SizedBox(height: 16),
+          const SizedBox(height: 40),
+          SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: ElevatedButton.icon(
+              onPressed: _startFaceCapture,
+              icon: const Icon(Icons.camera_alt),
+              label: const Text('Start Face Capture', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1976D2),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(28),
+                ),
+              ),
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 24),
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.grey.shade100,
+                color: Colors.red.shade50,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Column(
+              child: Row(
                 children: [
-                  const Text('Transaction ID:', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  const SizedBox(height: 4),
-                  Text(
-                    _transactionId!,
-                    style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
-                    textAlign: TextAlign.center,
+                  const Icon(Icons.error_outline, color: Colors.red),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(_error!, style: const TextStyle(color: Colors.red)),
                   ),
                 ],
               ),
@@ -321,19 +456,207 @@ class _VerificationScreenState extends State<VerificationScreen> {
     );
   }
   
+  // ==================== OTP VERIFICATION SCREEN ====================
+  Widget _buildOtpVerification() {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1976D2).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(50),
+                  ),
+                  child: const Icon(
+                    Icons.sms_outlined,
+                    size: 48,
+                    color: Color(0xFF1976D2),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Enter OTP sent to',
+                  style: TextStyle(fontSize: 16, color: Colors.grey),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _maskedMobile ?? 'Aadhaar registered mobile',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1976D2),
+                  ),
+                ),
+                const SizedBox(height: 32),
+                
+                // OTP Input Fields
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: List.generate(6, (i) => SizedBox(
+                    width: 45,
+                    child: TextField(
+                      controller: _otpControllers[i],
+                      maxLength: 1,
+                      keyboardType: TextInputType.number,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      decoration: InputDecoration(
+                        counterText: '',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(color: Color(0xFF1976D2), width: 2),
+                        ),
+                      ),
+                      onChanged: (value) {
+                        if (value.isNotEmpty && i < 5) {
+                          FocusScope.of(context).nextFocus();
+                        }
+                        setState(() => _error = null);
+                      },
+                    ),
+                  )),
+                ),
+                
+                if (_error != null) ...[
+                  const SizedBox(height: 16),
+                  Text(_error!, style: const TextStyle(color: Colors.red)),
+                ],
+                
+                const SizedBox(height: 24),
+                TextButton(
+                  onPressed: _sendOtp,
+                  child: const Text('Resend OTP', style: TextStyle(color: Color(0xFF1976D2))),
+                ),
+              ],
+            ),
+          ),
+          
+          // Verify Button
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton(
+              onPressed: _verifyOtp,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1976D2),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Text('Verify OTP', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // ==================== RESULT SCREEN ====================
+  Widget _buildResult() {
+    final isSuccess = _error == null;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Success/Failure Icon
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: (isSuccess ? Colors.green : Colors.red).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(100),
+              ),
+              child: Icon(
+                isSuccess ? Icons.check_circle : Icons.cancel,
+                size: 80,
+                color: isSuccess ? Colors.green : Colors.red,
+              ),
+            ),
+            const SizedBox(height: 32),
+            Text(
+              isSuccess ? 'Verification Successful' : 'Verification Failed',
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              isSuccess 
+                  ? 'Your identity has been verified successfully.'
+                  : _error ?? 'Verification could not be completed.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.grey, height: 1.5),
+            ),
+            
+            // Transaction ID
+            if (isSuccess && _transactionId != null) ...[
+              const SizedBox(height: 24),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  children: [
+                    const Text('Transaction ID:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    const SizedBox(height: 4),
+                    SelectableText(
+                      _transactionId!,
+                      style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            
+            // Method info
+            if (isSuccess && _verificationMethod != null) ...[
+              const SizedBox(height: 16),
+              Chip(
+                label: Text(
+                  'Verified via ${_verificationMethod == VerificationMethod.otp ? 'OTP' : 'Face RD'}',
+                  style: const TextStyle(color: Colors.white),
+                ),
+                backgroundColor: const Color(0xFF1976D2),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+  
+  // ==================== NAVIGATION ====================
   void _handleBack() {
-    if (_currentStep == _Step.aadhaarEntry) {
-      Navigator.of(context).pop(VerificationResult.cancelled());
-    } else if (_currentStep == _Step.methodSelection) {
-      if (widget.aadhaarNumber != null) {
+    switch (_currentStep) {
+      case _Step.aadhaarEntry:
         Navigator.of(context).pop(VerificationResult.cancelled());
-      } else {
+        break;
+      case _Step.methodSelection:
         setState(() => _currentStep = _Step.aadhaarEntry);
-      }
-    } else if (_currentStep == _Step.otpVerification) {
-      setState(() => _currentStep = _Step.methodSelection);
-    } else {
-      Navigator.of(context).pop(VerificationResult.cancelled());
+        break;
+      case _Step.faceAuth:
+      case _Step.otpVerification:
+        final config = IRCTCRailtelSDK.config;
+        if (config.enableOtp) {
+          setState(() => _currentStep = _Step.methodSelection);
+        } else {
+          setState(() => _currentStep = _Step.aadhaarEntry);
+        }
+        break;
+      case _Step.result:
+        Navigator.of(context).pop(VerificationResult.cancelled());
+        break;
     }
   }
   
@@ -348,22 +671,38 @@ class _VerificationScreenState extends State<VerificationScreen> {
       return;
     }
     _aadhaarNumber = aadhaar;
-    setState(() => _currentStep = _Step.methodSelection);
+    _goToMethodSelectionOrFaceAuth();
   }
   
   void _selectOtp() {
+    _verificationMethod = VerificationMethod.otp;
     setState(() => _currentStep = _Step.otpVerification);
     _sendOtp();
   }
   
-  Future<void> _selectFaceRD() async {
-    setState(() => _isLoading = true);
+  void _selectFaceRD() {
+    _verificationMethod = VerificationMethod.faceRD;
+    setState(() => _currentStep = _Step.faceAuth);
+  }
+  
+  // ==================== FACE RD CAPTURE ====================
+  Future<void> _startFaceCapture() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
     
     try {
+      // Check if Face RD is available
+      final isAvailable = await FaceRDService.isFaceRDAvailable();
+      if (!isAvailable) {
+        throw Exception('Face RD app not installed. Please install AadhaarFaceRD from ${Platform.isIOS ? 'App Store' : 'Play Store'}.');
+      }
+      
       // Capture face using Face RD app with KYC enabled
       final pidData = await FaceRDService.capture(
         isDemo: !IRCTCRailtelSDK.config.isProduction,
-        enableKyc: true, // Always use KYC for UKC transaction ID
+        enableKyc: true,
       );
       
       // Verify with API
@@ -374,12 +713,6 @@ class _VerificationScreenState extends State<VerificationScreen> {
         _isLoading = false;
         _error = e.toString().replaceFirst('Exception: ', '');
       });
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Face capture failed: $_error')),
-        );
-      }
     }
   }
   
@@ -395,14 +728,13 @@ class _VerificationScreenState extends State<VerificationScreen> {
           'bio': pidData,
           'uid': _aadhaarNumber,
           'phone': '9999999999',
-          'kyc': true, // Always true for UKC transaction ID
+          'kyc': true,
         }),
       ).timeout(const Duration(seconds: 30));
       
       final json = jsonDecode(response.body);
       final failed = json['failed'] ?? true;
       
-      // Parse transaction ID from response
       _transactionId = json['reqid'] ?? json['requestId'];
       
       if (!failed) {
@@ -431,11 +763,11 @@ class _VerificationScreenState extends State<VerificationScreen> {
     }
   }
   
+  // ==================== OTP VERIFICATION ====================
   Future<void> _sendOtp() async {
     setState(() => _isLoading = true);
     
     try {
-      // OTP endpoint with kyc=true query param
       final response = await http.post(
         Uri.parse('${SDKConfig.apiBaseUrl}/otpuidauth?kyc=true'),
         headers: {
@@ -448,7 +780,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
           'device_id': 'flutter_device',
           'model': Platform.isIOS ? 'iOS' : 'Android',
           'mode': 'sendOtp',
-          'kyc': true, // Always true for UKC transaction ID
+          'kyc': true,
           'otp': '',
           'reqid': '',
         }),
@@ -471,7 +803,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
   Future<void> _verifyOtp() async {
     final otp = _otpControllers.map((c) => c.text).join();
     if (otp.length != 6) {
-      setState(() => _error = 'Please enter complete OTP');
+      setState(() => _error = 'Please enter complete 6-digit OTP');
       return;
     }
     
@@ -483,7 +815,6 @@ class _VerificationScreenState extends State<VerificationScreen> {
     setState(() => _isLoading = true);
     
     try {
-      // Verify OTP with kyc=true
       final response = await http.post(
         Uri.parse('${SDKConfig.apiBaseUrl}/otpuidauth?kyc=true'),
         headers: {
@@ -496,7 +827,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
           'device_id': 'flutter_device',
           'model': Platform.isIOS ? 'iOS' : 'Android',
           'mode': 'verifyOtp',
-          'kyc': true, // Always true for UKC transaction ID
+          'kyc': true,
           'otp': otp,
           'reqid': _reqId,
         }),
@@ -506,7 +837,6 @@ class _VerificationScreenState extends State<VerificationScreen> {
       final failed = json['failed'] ?? false;
       final status = json['status']?.toString().toLowerCase();
       
-      // Parse transaction ID from response (should have UKC prefix)
       _transactionId = json['reqid'] ?? json['requestId'] ?? _reqId;
       
       if (!failed || status == 'success') {
@@ -545,6 +875,9 @@ class _VerificationScreenState extends State<VerificationScreen> {
     _aadhaar1.dispose();
     _aadhaar2.dispose();
     _aadhaar3.dispose();
+    _focus1.dispose();
+    _focus2.dispose();
+    _focus3.dispose();
     for (var c in _otpControllers) {
       c.dispose();
     }
@@ -555,6 +888,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
 enum _Step {
   aadhaarEntry,
   methodSelection,
+  faceAuth,
   otpVerification,
   result,
 }
