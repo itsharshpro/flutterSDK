@@ -1,77 +1,110 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:android_intent_plus/android_intent.dart';
-import 'package:android_intent_plus/flag.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
-/// Face RD Service for Flutter - Pure Dart Implementation
-/// Handles launching the AadhaarFaceRD app on Android and iOS
+/// Face RD Service for Flutter
+///
+/// Handles launching the UIDAI AadhaarFaceRD app on Android and iOS
+/// through native platform channels.
+///
+/// Android: Uses native startActivityForResult to launch Face RD and get PID data back
+/// iOS: Uses URL Scheme (FaceRDLib://) per UIDAI iOS API Spec v1.3
+///
+/// This service is used internally by the SDK. Integrators should not need to
+/// call this directly - instead use [IRCTCRailtelSDK.startVerification].
 class FaceRDService {
-  // Android Face RD intent action
-  static const String _faceRDActionAndroid = 'in.gov.uidai.rdservice.face.CAPTURE';
-  
-  // iOS Face RD URL scheme (per iOS API spec)
-  static const String _faceRDSchemeIOS = 'FaceRDLib';
-  
+  /// Platform channel for native Face RD communication
+  static const MethodChannel _channel =
+      MethodChannel('irctc_railtel_sdk/face_rd');
+
   // WADH value for KYC mode - must match server configuration
-  static const String _wadhValue = 'DNhD9jrIYSEgfz5PNa1jruNKtp9/fw8mNyL8BcpAvPk=';
-  
+  static const String _wadhValue =
+      'DNhD9jrIYSEgfz5PNa1jruNKtp9/fw8mNyL8BcpAvPk=';
+
   // PID Options templates (without WADH - for non-KYC mode)
-  static const String _pidOptionsProd = '<?xml version="1.0" encoding="UTF-8"?> <PidOptions ver="1.0" env="P"> <Opts format="0" pidVer="2.0" posh="UNKNOWN" /><Demo></Demo> <CustOpts><Param name="txnId" value="%s"/> </CustOpts> </PidOptions>';
-  static const String _pidOptionsDev = '<?xml version="1.0" encoding="UTF-8"?> <PidOptions ver="1.0" env="PP"> <Opts format="0" pidVer="2.0" posh="UNKNOWN" /><Demo></Demo> <CustOpts><Param name="txnId" value="%s"/> </CustOpts> </PidOptions>';
-  
+  static const String _pidOptionsProd =
+      '<?xml version="1.0" encoding="UTF-8"?> '
+      '<PidOptions ver="1.0" env="P"> '
+      '<Opts format="0" pidVer="2.0" posh="UNKNOWN" />'
+      '<Demo></Demo> '
+      '<CustOpts>'
+      '<Param name="txnId" value="%s"/> '
+      '</CustOpts> '
+      '</PidOptions>';
+
+  static const String _pidOptionsDev =
+      '<?xml version="1.0" encoding="UTF-8"?> '
+      '<PidOptions ver="1.0" env="PP"> '
+      '<Opts format="0" pidVer="2.0" posh="UNKNOWN" />'
+      '<Demo></Demo> '
+      '<CustOpts>'
+      '<Param name="txnId" value="%s"/> '
+      '</CustOpts> '
+      '</PidOptions>';
+
   // PID Options with WADH (for KYC mode - required when kyc=true in API)
-  static const String _pidOptionsKycProd = '<?xml version="1.0" encoding="UTF-8"?> <PidOptions ver="1.0" env="P"> <Opts format="0" pidVer="2.0" posh="UNKNOWN" wadh="$_wadhValue" /><Demo></Demo> <CustOpts><Param name="txnId" value="%s"/> </CustOpts> </PidOptions>';
-  static const String _pidOptionsKycDev = '<?xml version="1.0" encoding="UTF-8"?> <PidOptions ver="1.0" env="PP"> <Opts format="0" pidVer="2.0" posh="UNKNOWN" wadh="$_wadhValue" /><Demo></Demo> <CustOpts><Param name="txnId" value="%s"/> </CustOpts> </PidOptions>';
-  
-  // For receiving results
-  static const MethodChannel _channel = MethodChannel('irctc_railtel_sdk/face_rd');
-  static Completer<String>? _captureCompleter;
-  
-  /// Initialize the service - set up method channel handler
-  static void initialize() {
-    _channel.setMethodCallHandler(_handleMethodCall);
-  }
-  
-  /// Check if Face RD app is available
+  static const String _pidOptionsKycProd =
+      '<?xml version="1.0" encoding="UTF-8"?> '
+      '<PidOptions ver="1.0" env="P"> '
+      '<Opts format="0" pidVer="2.0" posh="UNKNOWN" wadh="$_wadhValue" />'
+      '<Demo></Demo> '
+      '<CustOpts>'
+      '<Param name="txnId" value="%s"/> '
+      '</CustOpts> '
+      '</PidOptions>';
+
+  static const String _pidOptionsKycDev =
+      '<?xml version="1.0" encoding="UTF-8"?> '
+      '<PidOptions ver="1.0" env="PP"> '
+      '<Opts format="0" pidVer="2.0" posh="UNKNOWN" wadh="$_wadhValue" />'
+      '<Demo></Demo> '
+      '<CustOpts>'
+      '<Param name="txnId" value="%s"/> '
+      '</CustOpts> '
+      '</PidOptions>';
+
+  /// Check if Face RD app is available on the device.
+  ///
+  /// On Android: Checks if any app can handle the CAPTURE intent.
+  ///             Requires <queries> in AndroidManifest.xml (handled by SDK).
+  /// On iOS: Checks if FaceRDLib:// URL scheme can be opened.
+  ///         Requires LSApplicationQueriesSchemes in Info.plist.
+  ///
+  /// Returns true if Face RD is available, false otherwise.
   static Future<bool> isFaceRDAvailable() async {
-    if (Platform.isAndroid) {
-      try {
-        final intent = AndroidIntent(
-          action: _faceRDActionAndroid,
-        );
-        return await intent.canResolveActivity() ?? false;
-      } catch (e) {
-        return false;
-      }
-    } else if (Platform.isIOS) {
-      try {
-        final uri = Uri.parse('$_faceRDSchemeIOS://');
-        return await canLaunchUrl(uri);
-      } catch (e) {
-        return false;
-      }
+    try {
+      final result = await _channel.invokeMethod<bool>('isFaceRDAvailable');
+      return result ?? false;
+    } on PlatformException catch (_) {
+      return false;
+    } catch (_) {
+      return false;
     }
-    return false;
   }
-  
-  /// Start face capture
-  /// [isDemo] - true for pre-production environment
-  /// [enableKyc] - true to use WADH for KYC mode (required for UKC transaction ID)
-  /// Returns PID XML data on success, throws exception on error
+
+  /// Start face capture using the Face RD app.
+  ///
+  /// [isDemo] - true for pre-production environment (env="PP"), false for production (env="P")
+  /// [enableKyc] - true to include WADH in PID options (required for eKYC transactions)
+  ///
+  /// Returns PID XML data string on success.
+  /// Throws [Exception] on error with descriptive message.
+  ///
+  /// Error codes from Face RD:
+  /// - 0: Success
+  /// - 100-129: Integration errors
+  /// - 731: User abort
+  /// - 736-738: Capture quality issues
+  /// - 850-892: App/device issues
+  /// - 901-904: Resource/network errors
   static Future<String> capture({
     required bool isDemo,
     bool enableKyc = true,
   }) async {
-    if (_captureCompleter != null && !_captureCompleter!.isCompleted) {
-      throw Exception('Face capture already in progress');
-    }
-    
     final txnId = const Uuid().v4();
-    
+
     // Select PID Options based on environment and KYC setting
     String pidOptions;
     if (enableKyc) {
@@ -80,170 +113,50 @@ class FaceRDService {
       pidOptions = isDemo ? _pidOptionsDev : _pidOptionsProd;
     }
     final pidXml = pidOptions.replaceAll('%s', txnId);
-    
-    if (Platform.isAndroid) {
-      return _captureAndroid(pidXml, txnId);
-    } else if (Platform.isIOS) {
-      return _captureIOS(pidXml, txnId);
-    } else {
-      throw Exception('Face RD is not supported on this platform');
-    }
-  }
-  
-  /// Android Face RD capture using android_intent_plus
-  static Future<String> _captureAndroid(String pidXml, String txnId) async {
-    _captureCompleter = Completer<String>();
-    
+
     try {
-      final intent = AndroidIntent(
-        action: _faceRDActionAndroid,
-        arguments: {
-          'PID_OPTIONS': pidXml,
-          'request': pidXml,
-        },
-        flags: <int>[Flag.FLAG_ACTIVITY_NEW_TASK],
-      );
-      
-      // Check if Face RD app is available
-      final canResolve = await intent.canResolveActivity() ?? false;
-      if (!canResolve) {
-        throw Exception('Face RD app not installed. Please install AadhaarFaceRD from Play Store.');
+      final result = await _channel.invokeMethod<String>('launchFaceRD', {
+        'pidOptions': pidXml,
+        'txnId': txnId,
+      });
+
+      if (result == null || result.isEmpty) {
+        throw Exception('No response from Face RD');
       }
-      
-      // Launch Face RD app
-      await intent.launch();
-      
-      // Wait for result with timeout
-      // Note: Getting results back requires native code or activity result handling
-      // For now, we'll use a simplified approach with timeout
-      return await _captureCompleter!.future.timeout(
-        const Duration(minutes: 5),
-        onTimeout: () {
-          throw Exception('Face capture timed out. Please try again.');
-        },
-      );
-    } catch (e) {
-      _captureCompleter = null;
-      if (e.toString().contains('timed out')) {
-        rethrow;
+
+      return result;
+    } on PlatformException catch (e) {
+      // Map platform-specific errors to user-friendly messages
+      switch (e.code) {
+        case 'NOT_INSTALLED':
+          throw Exception(
+            'Face RD app not installed. Please install AadhaarFaceRD from '
+            '${Platform.isIOS ? "App Store" : "Play Store"}.',
+          );
+        case 'CANCELLED':
+          throw Exception('Face capture was cancelled');
+        case 'FACE_CAPTURE_ERROR':
+          throw Exception(e.message ?? 'Face capture failed');
+        case 'NO_ACTIVITY':
+          throw Exception('Unable to launch Face RD. Please try again.');
+        case 'ALREADY_IN_PROGRESS':
+          throw Exception('Face capture already in progress');
+        default:
+          throw Exception(e.message ?? 'Face capture failed: ${e.code}');
       }
-      throw Exception('Face capture failed: ${e.toString()}');
     }
   }
-  
-  /// iOS Face RD capture via URL Scheme (per iOS API spec)
-  static Future<String> _captureIOS(String pidXml, String txnId) async {
-    _captureCompleter = Completer<String>();
-    
-    try {
-      // Encode the PID XML for URL
-      final encodedPid = Uri.encodeComponent(pidXml);
-      
-      // iOS URL scheme format per iOS API spec:
-      // FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=<encoded_pid_options>
-      final urlString = '$_faceRDSchemeIOS://in.gov.uidai.rdservice.face.CAPTURE?request=$encodedPid';
-      final uri = Uri.parse(urlString);
-      
-      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!launched) {
-        throw Exception('Failed to launch Face RD app. Please install AadhaarFaceRD from App Store.');
-      }
-      
-      // Wait for callback with timeout
-      return await _captureCompleter!.future.timeout(
-        const Duration(minutes: 5),
-        onTimeout: () {
-          throw Exception('Face capture timed out');
-        },
-      );
-    } catch (e) {
-      _captureCompleter = null;
-      rethrow;
-    }
-  }
-  
-  /// Handle method calls from native platforms (for receiving results)
-  static Future<dynamic> _handleMethodCall(MethodCall call) async {
-    switch (call.method) {
-      case 'onFaceRDResult':
-        final result = call.arguments as Map<dynamic, dynamic>?;
-        if (result != null && _captureCompleter != null && !_captureCompleter!.isCompleted) {
-          final pidData = result['pidData'] as String?;
-          final error = result['error'] as String?;
-          
-          if (pidData != null && pidData.isNotEmpty) {
-            if (pidData.contains('errCode="0"')) {
-              _captureCompleter!.complete(pidData);
-            } else {
-              final errMatch = RegExp(r'errInfo="(.+?)"').firstMatch(pidData);
-              _captureCompleter!.completeError(
-                Exception(errMatch?.group(1) ?? 'Face capture failed'),
-              );
-            }
-          } else if (error != null) {
-            _captureCompleter!.completeError(Exception(error));
-          } else {
-            _captureCompleter!.completeError(Exception('Face capture cancelled'));
-          }
-          _captureCompleter = null;
-        }
-        break;
-    }
-  }
-  
-  /// Complete the capture with result (call from app when receiving result)
-  static void completeCapture(String pidData) {
-    if (_captureCompleter != null && !_captureCompleter!.isCompleted) {
-      if (pidData.contains('errCode="0"')) {
-        _captureCompleter!.complete(pidData);
-      } else {
-        final errMatch = RegExp(r'errInfo="(.+?)"').firstMatch(pidData);
-        _captureCompleter!.completeError(
-          Exception(errMatch?.group(1) ?? 'Face capture failed'),
-        );
-      }
-      _captureCompleter = null;
-    }
-  }
-  
-  /// Cancel the pending capture
-  static void cancelCapture([String? error]) {
-    if (_captureCompleter != null && !_captureCompleter!.isCompleted) {
-      _captureCompleter!.completeError(Exception(error ?? 'Face capture cancelled'));
-      _captureCompleter = null;
-    }
-  }
-  
-  /// Handle URL callback (call from iOS AppDelegate or Android onNewIntent)
-  /// Returns true if the URL was handled, false otherwise
+
+  /// Handle URL callback from Face RD (iOS only).
+  ///
+  /// Call this from your AppDelegate's application(_:open:options:)
+  /// if you need manual URL handling. The SDK plugin handles this
+  /// automatically when registered as an application delegate.
+  ///
+  /// Returns true if the URL was handled by Face RD service.
   static bool handleCallback(Uri uri) {
-    if (_captureCompleter == null || _captureCompleter!.isCompleted) {
-      return false;
-    }
-    
-    final queryParams = uri.queryParameters;
-    final pidData = queryParams['response'] ?? 
-                    queryParams['pid'] ?? 
-                    queryParams['piddata'] ??
-                    queryParams['PID_DATA'];
-    final error = queryParams['error'] ?? queryParams['errorMessage'];
-    
-    if (pidData != null && pidData.isNotEmpty) {
-      if (pidData.contains('errCode="0"')) {
-        _captureCompleter!.complete(pidData);
-      } else {
-        final errMatch = RegExp(r'errInfo="(.+?)"').firstMatch(pidData);
-        _captureCompleter!.completeError(
-          Exception(errMatch?.group(1) ?? 'Face capture failed'),
-        );
-      }
-    } else if (error != null) {
-      _captureCompleter!.completeError(Exception(error));
-    } else {
-      _captureCompleter!.completeError(Exception('Face capture cancelled'));
-    }
-    
-    _captureCompleter = null;
-    return true;
+    // This is now handled natively by the iOS plugin.
+    // Kept for backward compatibility - integrators don't need to call this.
+    return false;
   }
 }

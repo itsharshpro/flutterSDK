@@ -8,8 +8,8 @@ class SDKConfig {
   static const String apiBaseUrl = 'https://examify.co.in/api/exa/seqr';
   static const String demoAuthUrl = 'https://examify.co.in/api/demoauth';
   
-  // API tokens - matching Android SDK
-  static const String apiToken = 'vef0vw0ydne6vtbgs18xl5swe9dx2n17';
+  // API tokens
+  static const String apiToken = '7alckyg32jzlmb2i2rwf4itdhna2bzb2';
   static const String demoAuthToken = 'f7aa24903a5e4ce59dc5c7e87dd5be4e';
   
   SDKConfig({

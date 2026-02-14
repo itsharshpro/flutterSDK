@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="in.irctcrailtel.sdk.flutter">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Required for Android 11+ (API 30+) to discover Face RD Services -->
+    <queries>
+        <!-- UIDAI Face RD Service intent -->
+        <intent>
+            <action android:name="in.gov.uidai.rdservice.face.CAPTURE" />
+        </intent>
+        <!-- Alternative Face RD Service intents used by various vendors -->
+        <intent>
+            <action android:name="in.gov.uidai.rdservice.fp.CAPTURE" />
+        </intent>
+        <intent>
+            <action android:name="in.gov.uidai.rdservice.iris.CAPTURE" />
+        </intent>
+        <!-- Aadhaar Face RD specific packages -->
+        <package android:name="com.uidai.aadhaarfacerd" />
+        <package android:name="in.gov.uidai.facerd" />
+        <package android:name="com.acpl.face_rd" />
+        <package android:name="com.mantra.facerd" />
+        <package android:name="com.secugen.facerd" />
+    </queries>
+
+</manifest>

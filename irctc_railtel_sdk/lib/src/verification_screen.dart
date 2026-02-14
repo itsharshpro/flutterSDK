@@ -9,11 +9,20 @@ import 'irctc_railtel_sdk.dart';
 import 'face_rd_service.dart';
 
 /// Main verification screen that handles the entire flow
-/// Matches Android SDK flow: Aadhaar Entry → Method Selection → Verification → Result
+/// Matches Android SDK flow: Aadhaar Entry → Demographics Entry → Demographics Verify → Method Selection → Verification → Result
 class VerificationScreen extends StatefulWidget {
   final String? aadhaarNumber;
+  final String? name;
+  final String? dob;
+  final String? gender;
   
-  const VerificationScreen({super.key, this.aadhaarNumber});
+  const VerificationScreen({
+    super.key, 
+    this.aadhaarNumber,
+    this.name,
+    this.dob,
+    this.gender,
+  });
   
   @override
   State<VerificationScreen> createState() => _VerificationScreenState();
@@ -22,17 +31,29 @@ class VerificationScreen extends StatefulWidget {
 class _VerificationScreenState extends State<VerificationScreen> {
   _Step _currentStep = _Step.aadhaarEntry;
   String? _aadhaarNumber;
+  String? _demographicsName;
+  String? _demographicsDob;
+  String? _demographicsGender;
+  String? _demographicsToken;
   String? _reqId;
   String? _maskedMobile;
   String? _transactionId;
   bool _isLoading = false;
   String? _error;
   VerificationMethod? _verificationMethod;
+  bool? _isFaceRDAvailable;
   
-  // Controllers
+  // Controllers - Aadhaar
   final _aadhaar1 = TextEditingController();
   final _aadhaar2 = TextEditingController();
   final _aadhaar3 = TextEditingController();
+  
+  // Controllers - Demographics
+  final _nameController = TextEditingController();
+  final _dobController = TextEditingController();
+  String _selectedGender = 'M'; // Default Male
+  
+  // Controllers - OTP
   final List<TextEditingController> _otpControllers = 
       List.generate(6, (_) => TextEditingController());
   
@@ -44,23 +65,30 @@ class _VerificationScreenState extends State<VerificationScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.aadhaarNumber != null && widget.aadhaarNumber!.length == 12) {
+    
+    // If all data provided, skip to demographics verification
+    if (widget.aadhaarNumber != null && widget.aadhaarNumber!.length == 12 &&
+        widget.name != null && widget.name!.isNotEmpty &&
+        widget.dob != null && widget.dob!.isNotEmpty &&
+        widget.gender != null && widget.gender!.isNotEmpty) {
+      _aadhaarNumber = widget.aadhaarNumber;
+      _demographicsName = widget.name;
+      _demographicsDob = widget.dob;
+      _demographicsGender = widget.gender;
+      _aadhaar1.text = widget.aadhaarNumber!.substring(0, 4);
+      _aadhaar2.text = widget.aadhaarNumber!.substring(4, 8);
+      _aadhaar3.text = widget.aadhaarNumber!.substring(8, 12);
+      // Skip directly to demographics verification
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _startDemographicsVerification();
+      });
+    } else if (widget.aadhaarNumber != null && widget.aadhaarNumber!.length == 12) {
       _aadhaarNumber = widget.aadhaarNumber;
       _aadhaar1.text = widget.aadhaarNumber!.substring(0, 4);
       _aadhaar2.text = widget.aadhaarNumber!.substring(4, 8);
       _aadhaar3.text = widget.aadhaarNumber!.substring(8, 12);
-      // Skip to method selection if Aadhaar provided
-      _goToMethodSelectionOrFaceAuth();
-    }
-  }
-  
-  void _goToMethodSelectionOrFaceAuth() {
-    final config = IRCTCRailtelSDK.config;
-    if (config.enableOtp) {
-      setState(() => _currentStep = _Step.methodSelection);
-    } else {
-      // Skip directly to Face Auth if OTP not enabled
-      _selectFaceRD();
+      // Skip Aadhaar entry, go to demographics
+      _currentStep = _Step.demographicsEntry;
     }
   }
   
@@ -92,6 +120,10 @@ class _VerificationScreenState extends State<VerificationScreen> {
     switch (_currentStep) {
       case _Step.aadhaarEntry:
         return 'Enter Aadhaar Number';
+      case _Step.demographicsEntry:
+        return 'Enter Your Details';
+      case _Step.demographicsVerification:
+        return 'Verifying Details';
       case _Step.methodSelection:
         return 'Choose Verification Method';
       case _Step.faceAuth:
@@ -104,13 +136,17 @@ class _VerificationScreenState extends State<VerificationScreen> {
   }
   
   Widget _buildBody() {
-    if (_isLoading) {
+    if (_isLoading && _currentStep != _Step.demographicsVerification) {
       return _buildLoadingScreen();
     }
     
     switch (_currentStep) {
       case _Step.aadhaarEntry:
         return _buildAadhaarEntry();
+      case _Step.demographicsEntry:
+        return _buildDemographicsEntry();
+      case _Step.demographicsVerification:
+        return _buildDemographicsVerification();
       case _Step.methodSelection:
         return _buildMethodSelection();
       case _Step.faceAuth:
@@ -280,8 +316,376 @@ class _VerificationScreenState extends State<VerificationScreen> {
     );
   }
   
+  // ==================== DEMOGRAPHICS ENTRY SCREEN ====================
+  Widget _buildDemographicsEntry() {
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1976D2).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(50),
+                    ),
+                    child: const Icon(
+                      Icons.person_outline,
+                      size: 48,
+                      color: Color(0xFF1976D2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                const Center(
+                  child: Text(
+                    'Enter your details as per Aadhaar',
+                    style: TextStyle(fontSize: 16, color: Color(0xFF333333)),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Center(
+                  child: Text(
+                    'Aadhaar: ${_maskAadhaar(_aadhaarNumber ?? '')}',
+                    style: const TextStyle(fontSize: 14, color: Colors.grey),
+                  ),
+                ),
+                const SizedBox(height: 32),
+                
+                // Full Name
+                const Text(
+                  'Full Name (as per Aadhaar)',
+                  style: TextStyle(
+                    fontSize: 14, 
+                    fontWeight: FontWeight.w600, 
+                    color: Color(0xFF333333),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _nameController,
+                  textCapitalization: TextCapitalization.words,
+                  style: const TextStyle(fontSize: 16),
+                  decoration: InputDecoration(
+                    hintText: 'Enter your full name',
+                    prefixIcon: const Icon(Icons.person, color: Color(0xFF1976D2)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Color(0xFFBDBDBD)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Color(0xFF1976D2), width: 2),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+                  ),
+                  onChanged: (_) => setState(() => _error = null),
+                ),
+                const SizedBox(height: 20),
+                
+                // Date of Birth
+                const Text(
+                  'Date of Birth',
+                  style: TextStyle(
+                    fontSize: 14, 
+                    fontWeight: FontWeight.w600, 
+                    color: Color(0xFF333333),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _dobController,
+                  readOnly: true,
+                  style: const TextStyle(fontSize: 16),
+                  decoration: InputDecoration(
+                    hintText: 'Select date of birth',
+                    prefixIcon: const Icon(Icons.calendar_today, color: Color(0xFF1976D2)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Color(0xFFBDBDBD)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Color(0xFF1976D2), width: 2),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+                  ),
+                  onTap: _selectDateOfBirth,
+                ),
+                const SizedBox(height: 20),
+                
+                // Gender
+                const Text(
+                  'Gender',
+                  style: TextStyle(
+                    fontSize: 14, 
+                    fontWeight: FontWeight.w600, 
+                    color: Color(0xFF333333),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildGenderOption('M', 'Male', Icons.male),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildGenderOption('F', 'Female', Icons.female),
+                    ),
+                  ],
+                ),
+                
+                // Error message
+                if (_error != null) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.error_outline, color: Colors.red, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _error!, 
+                            style: const TextStyle(color: Colors.red, fontSize: 14),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        
+        // Buttons
+        Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: [
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: _proceedFromDemographics,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1976D2),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text('Verify Details', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(VerificationResult.cancelled()),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF757575),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text('Cancel', style: TextStyle(fontSize: 16)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildGenderOption(String value, String label, IconData icon) {
+    final isSelected = _selectedGender == value;
+    return GestureDetector(
+      onTap: () => setState(() {
+        _selectedGender = value;
+        _error = null;
+      }),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF1976D2) : const Color(0xFFBDBDBD),
+            width: isSelected ? 2 : 1,
+          ),
+          color: isSelected ? const Color(0xFF1976D2).withOpacity(0.05) : Colors.white,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon, 
+              color: isSelected ? const Color(0xFF1976D2) : Colors.grey,
+              size: 22,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                color: isSelected ? const Color(0xFF1976D2) : Colors.grey.shade700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Future<void> _selectDateOfBirth() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime(2000, 1, 1),
+      firstDate: DateTime(1920, 1, 1),
+      lastDate: now,
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFF1976D2),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    
+    if (picked != null) {
+      final formatted = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+      _dobController.text = formatted;
+      setState(() => _error = null);
+    }
+  }
+  
+  // ==================== DEMOGRAPHICS VERIFICATION SCREEN ====================
+  Widget _buildDemographicsVerification() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (_error == null) ...[
+              // Loading state
+              const CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1976D2)),
+              ),
+              const SizedBox(height: 32),
+              const Text(
+                'Verifying demographics...',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF333333),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Please wait while we verify your details',
+                style: TextStyle(fontSize: 14, color: Colors.grey),
+              ),
+            ] else ...[
+              // Error state
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(100),
+                ),
+                child: const Icon(
+                  Icons.cancel,
+                  size: 64,
+                  color: Colors.red,
+                ),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'Demographics Verification Failed',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF333333),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: Colors.red),
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      _error = null;
+                      _currentStep = _Step.demographicsEntry;
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1976D2),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text('Try Again', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: OutlinedButton(
+                  onPressed: () {
+                    Navigator.of(context).pop(VerificationResult.failure(
+                      errorCode: 'DEMOGRAPHICS_FAILED',
+                      message: _error!,
+                    ));
+                  },
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFF757575)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text('Cancel', style: TextStyle(fontSize: 16, color: Color(0xFF757575))),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+  
   // ==================== METHOD SELECTION SCREEN ====================
   Widget _buildMethodSelection() {
+    final faceRDAvailable = _isFaceRDAvailable ?? true;
+    
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -305,6 +709,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
             title: 'OTP Verification',
             subtitle: 'Receive OTP on Aadhaar-linked mobile number',
             onTap: _selectOtp,
+            enabled: true,
           ),
           const SizedBox(height: 16),
           
@@ -312,9 +717,44 @@ class _VerificationScreenState extends State<VerificationScreen> {
           _buildMethodCard(
             icon: Icons.face_outlined,
             title: 'Face Authentication',
-            subtitle: 'Verify using Face RD biometric recognition',
-            onTap: _selectFaceRD,
+            subtitle: faceRDAvailable 
+                ? 'Verify using Face RD biometric recognition'
+                : 'Face RD app not installed',
+            onTap: () {
+              if (faceRDAvailable) {
+                _selectFaceRD();
+              } else {
+                setState(() {
+                  _error = 'Face RD app is not installed. Please install AadhaarFaceRD from ${Platform.isIOS ? "App Store" : "Play Store"}.';
+                });
+              }
+            },
+            enabled: faceRDAvailable,
           ),
+          
+          // Error message
+          if (_error != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.orange.shade700, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _error!, 
+                      style: TextStyle(color: Colors.orange.shade800, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           
           const Spacer(),
           
@@ -343,42 +783,46 @@ class _VerificationScreenState extends State<VerificationScreen> {
     required String title,
     required String subtitle,
     required VoidCallback onTap,
+    bool enabled = true,
   }) {
-    return Material(
-      elevation: 2,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.5,
+      child: Material(
+        elevation: 2,
         borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.shade200),
-          ),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1976D2).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1976D2).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon, size: 32, color: const Color(0xFF1976D2)),
                 ),
-                child: Icon(icon, size: 32, color: const Color(0xFF1976D2)),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 4),
-                    Text(subtitle, style: const TextStyle(fontSize: 13, color: Colors.grey)),
-                  ],
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 4),
+                      Text(subtitle, style: TextStyle(fontSize: 13, color: enabled ? Colors.grey : Colors.red.shade300)),
+                    ],
+                  ),
                 ),
-              ),
-              const Icon(Icons.chevron_right, color: Colors.grey),
-            ],
+                const Icon(Icons.chevron_right, color: Colors.grey),
+              ],
+            ),
           ),
         ),
       ),
@@ -642,8 +1086,18 @@ class _VerificationScreenState extends State<VerificationScreen> {
       case _Step.aadhaarEntry:
         Navigator.of(context).pop(VerificationResult.cancelled());
         break;
-      case _Step.methodSelection:
+      case _Step.demographicsEntry:
         setState(() => _currentStep = _Step.aadhaarEntry);
+        break;
+      case _Step.demographicsVerification:
+        setState(() {
+          _error = null;
+          _currentStep = _Step.demographicsEntry;
+        });
+        break;
+      case _Step.methodSelection:
+        // Demographics already passed, go back to demographics entry
+        setState(() => _currentStep = _Step.demographicsEntry);
         break;
       case _Step.faceAuth:
       case _Step.otpVerification:
@@ -651,7 +1105,8 @@ class _VerificationScreenState extends State<VerificationScreen> {
         if (config.enableOtp) {
           setState(() => _currentStep = _Step.methodSelection);
         } else {
-          setState(() => _currentStep = _Step.aadhaarEntry);
+          // Go back to demographics entry if no method selection
+          setState(() => _currentStep = _Step.demographicsEntry);
         }
         break;
       case _Step.result:
@@ -671,18 +1126,139 @@ class _VerificationScreenState extends State<VerificationScreen> {
       return;
     }
     _aadhaarNumber = aadhaar;
-    _goToMethodSelectionOrFaceAuth();
+    setState(() {
+      _error = null;
+      _currentStep = _Step.demographicsEntry;
+    });
+  }
+  
+  void _proceedFromDemographics() {
+    final name = _nameController.text.trim();
+    final dob = _dobController.text.trim();
+    final gender = _selectedGender;
+    
+    if (name.isEmpty) {
+      setState(() => _error = 'Please enter your full name as per Aadhaar');
+      return;
+    }
+    if (dob.isEmpty) {
+      setState(() => _error = 'Please select your date of birth');
+      return;
+    }
+    if (gender.isEmpty) {
+      setState(() => _error = 'Please select your gender');
+      return;
+    }
+    
+    _demographicsName = name;
+    _demographicsDob = dob;
+    _demographicsGender = gender;
+    
+    _startDemographicsVerification();
+  }
+  
+  // ==================== DEMOGRAPHICS VERIFICATION ====================
+  Future<void> _startDemographicsVerification() async {
+    setState(() {
+      _error = null;
+      _currentStep = _Step.demographicsVerification;
+    });
+    
+    try {
+      final response = await http.post(
+        Uri.parse(SDKConfig.demoAuthUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'token': SDKConfig.demoAuthToken,
+        },
+        body: jsonEncode({
+          'aadhar_no': _aadhaarNumber,
+          'name': _demographicsName,
+          'dob': _demographicsDob,
+          'gender': _demographicsGender,
+        }),
+      ).timeout(const Duration(seconds: 30));
+      
+      final json = jsonDecode(response.body);
+      final status = json['status'] ?? 0;
+      final message = json['message'] ?? 'Demographics verification failed';
+      final token = json['token'];
+      
+      if (status == 1) {
+        // Demographics passed
+        _demographicsToken = token;
+        _goToMethodSelectionOrFaceAuth();
+      } else {
+        // Demographics failed
+        if (token != null) {
+          _demographicsToken = token;
+        }
+        setState(() {
+          _error = message;
+        });
+      }
+    } on Exception catch (e) {
+      String errorMsg = e.toString();
+      if (errorMsg.contains('SocketTimeoutException') || errorMsg.contains('TimeoutException')) {
+        errorMsg = 'Server timeout. Please try again.';
+      } else if (errorMsg.contains('SocketException') || errorMsg.contains('UnknownHostException')) {
+        errorMsg = 'No internet connection.';
+      } else {
+        errorMsg = 'Demographics verification failed: ${errorMsg.replaceFirst('Exception: ', '')}';
+      }
+      setState(() {
+        _error = errorMsg;
+      });
+    }
+  }
+  
+  void _goToMethodSelectionOrFaceAuth() {
+    final config = IRCTCRailtelSDK.config;
+    if (config.enableOtp) {
+      // Check Face RD availability before showing method selection
+      _checkFaceRDAndShowMethodSelection();
+    } else {
+      // Skip directly to Face Auth if OTP not enabled
+      _selectFaceRD();
+    }
+  }
+  
+  Future<void> _checkFaceRDAndShowMethodSelection() async {
+    try {
+      final available = await FaceRDService.isFaceRDAvailable();
+      if (mounted) {
+        setState(() {
+          _isFaceRDAvailable = available;
+          _error = null;
+          _currentStep = _Step.methodSelection;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isFaceRDAvailable = false;
+          _error = null;
+          _currentStep = _Step.methodSelection;
+        });
+      }
+    }
   }
   
   void _selectOtp() {
     _verificationMethod = VerificationMethod.otp;
-    setState(() => _currentStep = _Step.otpVerification);
+    setState(() {
+      _error = null;
+      _currentStep = _Step.otpVerification;
+    });
     _sendOtp();
   }
   
   void _selectFaceRD() {
     _verificationMethod = VerificationMethod.faceRD;
-    setState(() => _currentStep = _Step.faceAuth);
+    setState(() {
+      _error = null;
+      _currentStep = _Step.faceAuth;
+    });
   }
   
   // ==================== FACE RD CAPTURE ====================
@@ -693,13 +1269,10 @@ class _VerificationScreenState extends State<VerificationScreen> {
     });
     
     try {
-      // Check if Face RD is available
-      final isAvailable = await FaceRDService.isFaceRDAvailable();
-      if (!isAvailable) {
-        throw Exception('Face RD app not installed. Please install AadhaarFaceRD from ${Platform.isIOS ? 'App Store' : 'Play Store'}.');
-      }
-      
       // Capture face using Face RD app with KYC enabled
+      // The native plugin handles:
+      //   Android: startActivityForResult with Face RD intent
+      //   iOS: URL Scheme launch (FaceRDLib://) per UIDAI iOS API Spec
       final pidData = await FaceRDService.capture(
         isDemo: !IRCTCRailtelSDK.config.isProduction,
         enableKyc: true,
@@ -709,10 +1282,21 @@ class _VerificationScreenState extends State<VerificationScreen> {
       await _verifyFaceWithAPI(pidData);
       
     } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _error = e.toString().replaceFirst('Exception: ', '');
-      });
+      String errorMsg = e.toString().replaceFirst('Exception: ', '');
+      
+      // Provide helpful messages for common errors
+      if (errorMsg.contains('not installed') || errorMsg.contains('NOT_INSTALLED')) {
+        errorMsg = 'Face RD app is not installed.\n\nPlease install "Aadhaar Face RD" from ${Platform.isIOS ? "App Store" : "Play Store"} and try again.';
+      } else if (errorMsg.contains('cancelled') || errorMsg.contains('CANCELLED')) {
+        errorMsg = 'Face capture was cancelled. Please try again.';
+      }
+      
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _error = errorMsg;
+        });
+      }
     }
   }
   
@@ -870,11 +1454,19 @@ class _VerificationScreenState extends State<VerificationScreen> {
     setState(() => _isLoading = false);
   }
   
+  // ==================== HELPERS ====================
+  String _maskAadhaar(String aadhaar) {
+    if (aadhaar.length != 12) return aadhaar;
+    return 'XXXX XXXX ${aadhaar.substring(8)}';
+  }
+  
   @override
   void dispose() {
     _aadhaar1.dispose();
     _aadhaar2.dispose();
     _aadhaar3.dispose();
+    _nameController.dispose();
+    _dobController.dispose();
     _focus1.dispose();
     _focus2.dispose();
     _focus3.dispose();
@@ -887,6 +1479,8 @@ class _VerificationScreenState extends State<VerificationScreen> {
 
 enum _Step {
   aadhaarEntry,
+  demographicsEntry,
+  demographicsVerification,
   methodSelection,
   faceAuth,
   otpVerification,

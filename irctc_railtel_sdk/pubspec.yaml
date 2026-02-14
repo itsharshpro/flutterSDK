@@ -11,11 +11,18 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.1.0
-  url_launcher: ^6.2.0
   uuid: ^4.2.0
-  android_intent_plus: ^5.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^2.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: in.irctcrailtel.sdk.flutter
+        pluginClass: IRCTCRailtelPlugin
+      ios:
+        pluginClass: IRCTCRailtelPlugin
