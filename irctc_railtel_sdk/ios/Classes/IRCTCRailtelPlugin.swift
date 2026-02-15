@@ -80,10 +80,14 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
      * Per UIDAI iOS API Spec v1.3:
      * URL format: FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=<encoded_pid_options>
      *
-     * Encoding strategy (matching UIDAI sample code):
-     * 1. Build full URL string with raw PID XML as query value
-     * 2. Percent-encode the ENTIRE URL with .urlQueryAllowed
-     * 3. Create URL from the encoded string
+     * CRITICAL ENCODING NOTE:
+     * The PID XML value must be encoded SEPARATELY with a strict charset that
+     * also encodes = ? & + / characters. Using .urlQueryAllowed on the entire
+     * URL does NOT encode = and ? which are valid URL chars but break query
+     * parameter parsing when they appear inside the request VALUE.
+     *
+     * Without this, the Face RD app's URL parser splits on the first unencoded =
+     * and only receives a partial XML, causing Error 103 (env value not found).
      */
     private func launchFaceRD(pidOptions: String, txnId: String?, result: @escaping FlutterResult) {
         if IRCTCRailtelPlugin.pendingResult != nil {
@@ -99,29 +103,33 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         NSLog("[IRCTCRailtelSDK] TxnId: %@", txnId ?? "nil")
         NSLog("[IRCTCRailtelSDK] PID Options XML (raw): %@", pidOptions)
         
-        // Per UIDAI iOS API Spec v1.3 - Section 2.2 Invocation (EXACT match):
-        // 1. Build URL string with raw PID XML: FaceRDLib://action?request=<raw_pid>
-        // 2. Encode the ENTIRE URL with .urlQueryAllowed
-        // 3. Create URL from encoded string
-        // This is EXACTLY what the UIDAI sample code does.
-        let customUrl = "FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=\(pidOptions)"
-        
-        NSLog("[IRCTCRailtelSDK] Custom URL (before encoding, first 300): %@", String(customUrl.prefix(300)))
-        
-        guard let encodedUrl = customUrl.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
-            NSLog("[IRCTCRailtelSDK] ERROR: Failed to percent-encode URL")
+        // STEP 1: Encode the PID XML value with RFC 3986 unreserved characters ONLY.
+        // This ensures ALL special chars (= ? & + / < > " : ; etc.) in the XML
+        // are percent-encoded, preventing the URL parser from misinterpreting them
+        // as URL structural characters.
+        let unreserved = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+        guard let encodedPidValue = pidOptions.addingPercentEncoding(withAllowedCharacters: unreserved) else {
+            NSLog("[IRCTCRailtelSDK] ERROR: Failed to percent-encode PID XML value")
             result(FlutterError(
                 code: "ENCODE_ERROR",
-                message: "Failed to encode URL",
+                message: "Failed to encode PID XML",
                 details: nil
             ))
             return
         }
         
-        NSLog("[IRCTCRailtelSDK] Encoded URL (first 300): %@", String(encodedUrl.prefix(300)))
+        // STEP 2: Build the URL with the properly encoded value.
+        // The URL structure (scheme, host, ?, request=) uses literal characters.
+        // The value portion is fully encoded from step 1.
+        let urlString = "FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=\(encodedPidValue)"
         
-        guard let url = URL(string: encodedUrl) else {
-            NSLog("[IRCTCRailtelSDK] ERROR: Failed to create URL from encoded string")
+        NSLog("[IRCTCRailtelSDK] Encoded PID value (first 200): %@", String(encodedPidValue.prefix(200)))
+        NSLog("[IRCTCRailtelSDK] Full URL string (first 300): %@", String(urlString.prefix(300)))
+        
+        // STEP 3: Create URL directly - no additional encoding needed since
+        // the URL structure is clean and the value is fully encoded.
+        guard let url = URL(string: urlString) else {
+            NSLog("[IRCTCRailtelSDK] ERROR: Failed to create URL from string")
             result(FlutterError(
                 code: "URL_ERROR",
                 message: "Failed to create Face RD URL",
