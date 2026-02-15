@@ -89,22 +89,12 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
             return
         }
         
-        // Encode PID options for URL query parameter
-        guard let encodedPid = pidOptions.addingPercentEncoding(
-            withAllowedCharacters: .urlQueryAllowed
-        ) else {
-            result(FlutterError(
-                code: "ENCODE_ERROR",
-                message: "Failed to encode PID options",
-                details: nil
-            ))
-            return
-        }
+        // Per UIDAI iOS API Spec v1.3:
+        // 1. Build URL with raw PID XML
+        // 2. Encode the ENTIRE URL once
+        // Do NOT encode PID separately then encode URL again (double-encoding breaks env value)
+        let customUrl = "FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=\(pidOptions)"
         
-        // Build the URL: FaceRDLib://action?request=<encoded_pid>
-        let customUrl = "FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=\(encodedPid)"
-        
-        // Per iOS API spec: encode the entire URL
         guard let encodedUrl = customUrl.addingPercentEncoding(
             withAllowedCharacters: .urlQueryAllowed
         ),
