@@ -69,16 +69,22 @@ class FaceRDService {
       '</PidOptions>';
 
   // =====================================================
-  // iOS PID Options (matching UIDAI iOS API Spec v1.3 Section 2.3 EXACTLY)
+  // iOS PID Options (matching UIDAI iOS API Spec v1.3 Section 2.3)
   // - No posh attribute (reserved on iOS, error code 126)
   // - No <Demo> element (not in iOS spec)
   // - Has otp="" in Opts (per iOS spec)
   // - No trailing spaces between elements
+  //
+  // NOTE on env value:
+  // The iOS Face RD app (UIDAI spec v1.3 - "WIP Draft Release") uses
+  // env="S" (Staging). The production iOS Face RD app from App Store
+  // is currently a staging/pre-production build and rejects env="P".
+  // Android Face RD is separate and uses env="P"/"PP" correctly.
   // =====================================================
 
   static const String _iosPidOptionsProd =
       '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="P">'
+      '<PidOptions ver="1.0" env="S">'
       '<Opts format="0" pidVer="2.0" otp="" />'
       '<CustOpts>'
       '<Param name="txnId" value="%s"/>'
@@ -87,7 +93,7 @@ class FaceRDService {
 
   static const String _iosPidOptionsDev =
       '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="PP">'
+      '<PidOptions ver="1.0" env="S">'
       '<Opts format="0" pidVer="2.0" otp="" />'
       '<CustOpts>'
       '<Param name="txnId" value="%s"/>'
@@ -96,7 +102,7 @@ class FaceRDService {
 
   static const String _iosPidOptionsKycProd =
       '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="P">'
+      '<PidOptions ver="1.0" env="S">'
       '<Opts format="0" pidVer="2.0" otp="" wadh="$_wadhValue" />'
       '<CustOpts>'
       '<Param name="txnId" value="%s"/>'
@@ -105,7 +111,7 @@ class FaceRDService {
 
   static const String _iosPidOptionsKycDev =
       '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="PP">'
+      '<PidOptions ver="1.0" env="S">'
       '<Opts format="0" pidVer="2.0" otp="" wadh="$_wadhValue" />'
       '<CustOpts>'
       '<Param name="txnId" value="%s"/>'

@@ -123,8 +123,10 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         // The value portion is fully encoded from step 1.
         let urlString = "FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=\(encodedPidValue)"
         
-        NSLog("[IRCTCRailtelSDK] Encoded PID value (first 200): %@", String(encodedPidValue.prefix(200)))
-        NSLog("[IRCTCRailtelSDK] Full URL string (first 300): %@", String(urlString.prefix(300)))
+        NSLog("[IRCTCRailtelSDK] Encoded PID value length: %d", encodedPidValue.count)
+        NSLog("[IRCTCRailtelSDK] Full URL string length: %d", urlString.count)
+        // Log the COMPLETE URL for debugging (no truncation)
+        NSLog("[IRCTCRailtelSDK] COMPLETE URL: %@", urlString)
         
         // STEP 3: Create URL directly - no additional encoding needed since
         // the URL structure is clean and the value is fully encoded.
@@ -138,7 +140,7 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
             return
         }
         
-        NSLog("[IRCTCRailtelSDK] Final URL (first 300): %@", String(url.absoluteString.prefix(300)))
+        NSLog("[IRCTCRailtelSDK] Final URL: %@", url.absoluteString)
         
         if UIApplication.shared.canOpenURL(url) {
             NSLog("[IRCTCRailtelSDK] canOpenURL: YES - launching Face RD")
