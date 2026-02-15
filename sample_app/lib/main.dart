@@ -9,7 +9,6 @@ void main() async {
     config: SDKConfig(
       environment: Environment.production,  // Use Environment.demo for testing
       enableOtp: true,   // Enable OTP verification option
-      enableKyc: false,  // Set true to receive name, DOB, photo in result
     ),
   );
   

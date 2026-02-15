@@ -1,7 +1,6 @@
 /// SDK Configuration
 class SDKConfig {
   final Environment environment;
-  final bool enableKyc;
   final bool enableOtp;
   
   // API endpoints - matching Android SDK
@@ -14,7 +13,6 @@ class SDKConfig {
   
   SDKConfig({
     this.environment = Environment.production,
-    this.enableKyc = false,
     this.enableOtp = false,
   });
   

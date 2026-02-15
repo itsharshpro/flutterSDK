@@ -42,7 +42,6 @@ void main() async {
     config: SDKConfig(
       environment: Environment.production,
       enableOtp: true,   // Show OTP option
-      enableKyc: false,  // Get user details
     ),
   );
   
@@ -71,7 +70,6 @@ if (result.isSuccess) {
 |--------|------|---------|-------------|
 | `environment` | `Environment` | `production` | `production` or `demo` |
 | `enableOtp` | `bool` | `false` | Enable OTP verification option |
-| `enableKyc` | `bool` | `false` | Return name, DOB, photo in result |
 
 ## Verification Result
 

@@ -166,7 +166,6 @@ For Face RD authentication to work, install **AadhaarFaceRD** from App Store on 
 SDKConfig config = SDKConfig(
   environment: Environment.production, // or Environment.demo
   enableOtp: true,    // Show OTP option (true/false)
-  enableKyc: false,   // Get name, DOB, photo in result
 );
 ```
 
@@ -174,7 +173,6 @@ SDKConfig config = SDKConfig(
 |--------|------|---------|-------------|
 | `environment` | `Environment` | `production` | `production` or `demo` |
 | `enableOtp` | `bool` | `false` | Show OTP verification option |
-| `enableKyc` | `bool` | `false` | Return user details (name, DOB, photo) |
 
 ---
 
