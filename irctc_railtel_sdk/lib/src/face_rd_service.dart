@@ -23,8 +23,12 @@ class FaceRDService {
   static const String _wadhValue =
       'DNhD9jrIYSEgfz5PNa1jruNKtp9/fw8mNyL8BcpAvPk=';
 
-  // PID Options templates (without WADH - for non-KYC mode)
-  static const String _pidOptionsProd =
+  // =====================================================
+  // ANDROID PID Options (used with Intent extras - no URL encoding needed)
+  // Matches the working native Android SDK format exactly
+  // =====================================================
+
+  static const String _androidPidOptionsProd =
       '<?xml version="1.0" encoding="UTF-8"?> '
       '<PidOptions ver="1.0" env="P"> '
       '<Opts format="0" pidVer="2.0" posh="UNKNOWN" />'
@@ -34,7 +38,7 @@ class FaceRDService {
       '</CustOpts> '
       '</PidOptions>';
 
-  static const String _pidOptionsDev =
+  static const String _androidPidOptionsDev =
       '<?xml version="1.0" encoding="UTF-8"?> '
       '<PidOptions ver="1.0" env="PP"> '
       '<Opts format="0" pidVer="2.0" posh="UNKNOWN" />'
@@ -44,8 +48,7 @@ class FaceRDService {
       '</CustOpts> '
       '</PidOptions>';
 
-  // PID Options with WADH (for KYC mode - required when kyc=true in API)
-  static const String _pidOptionsKycProd =
+  static const String _androidPidOptionsKycProd =
       '<?xml version="1.0" encoding="UTF-8"?> '
       '<PidOptions ver="1.0" env="P"> '
       '<Opts format="0" pidVer="2.0" posh="UNKNOWN" wadh="$_wadhValue" />'
@@ -55,7 +58,7 @@ class FaceRDService {
       '</CustOpts> '
       '</PidOptions>';
 
-  static const String _pidOptionsKycDev =
+  static const String _androidPidOptionsKycDev =
       '<?xml version="1.0" encoding="UTF-8"?> '
       '<PidOptions ver="1.0" env="PP"> '
       '<Opts format="0" pidVer="2.0" posh="UNKNOWN" wadh="$_wadhValue" />'
@@ -63,6 +66,50 @@ class FaceRDService {
       '<CustOpts>'
       '<Param name="txnId" value="%s"/> '
       '</CustOpts> '
+      '</PidOptions>';
+
+  // =====================================================
+  // iOS PID Options (matching UIDAI iOS API Spec v1.3 Section 2.3 EXACTLY)
+  // - No posh attribute (reserved on iOS, error code 126)
+  // - No <Demo> element (not in iOS spec)
+  // - Has otp="" in Opts (per iOS spec)
+  // - No trailing spaces between elements
+  // =====================================================
+
+  static const String _iosPidOptionsProd =
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<PidOptions ver="1.0" env="P">'
+      '<Opts format="0" pidVer="2.0" otp="" />'
+      '<CustOpts>'
+      '<Param name="txnId" value="%s"/>'
+      '</CustOpts>'
+      '</PidOptions>';
+
+  static const String _iosPidOptionsDev =
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<PidOptions ver="1.0" env="PP">'
+      '<Opts format="0" pidVer="2.0" otp="" />'
+      '<CustOpts>'
+      '<Param name="txnId" value="%s"/>'
+      '</CustOpts>'
+      '</PidOptions>';
+
+  static const String _iosPidOptionsKycProd =
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<PidOptions ver="1.0" env="P">'
+      '<Opts format="0" pidVer="2.0" otp="" wadh="$_wadhValue" />'
+      '<CustOpts>'
+      '<Param name="txnId" value="%s"/>'
+      '</CustOpts>'
+      '</PidOptions>';
+
+  static const String _iosPidOptionsKycDev =
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<PidOptions ver="1.0" env="PP">'
+      '<Opts format="0" pidVer="2.0" otp="" wadh="$_wadhValue" />'
+      '<CustOpts>'
+      '<Param name="txnId" value="%s"/>'
+      '</CustOpts>'
       '</PidOptions>';
 
   /// Check if Face RD app is available on the device.
@@ -105,12 +152,23 @@ class FaceRDService {
   }) async {
     final txnId = const Uuid().v4();
 
-    // Select PID Options based on environment and KYC setting
+    // Select PID Options based on platform, environment, and KYC setting
+    // iOS and Android have different PID XML formats per their respective specs
     String pidOptions;
-    if (enableKyc) {
-      pidOptions = isDemo ? _pidOptionsKycDev : _pidOptionsKycProd;
+    if (Platform.isIOS) {
+      // iOS: Use UIDAI iOS API Spec v1.3 format
+      if (enableKyc) {
+        pidOptions = isDemo ? _iosPidOptionsKycDev : _iosPidOptionsKycProd;
+      } else {
+        pidOptions = isDemo ? _iosPidOptionsDev : _iosPidOptionsProd;
+      }
     } else {
-      pidOptions = isDemo ? _pidOptionsDev : _pidOptionsProd;
+      // Android: Use working native Android SDK format
+      if (enableKyc) {
+        pidOptions = isDemo ? _androidPidOptionsKycDev : _androidPidOptionsKycProd;
+      } else {
+        pidOptions = isDemo ? _androidPidOptionsDev : _androidPidOptionsProd;
+      }
     }
     final pidXml = pidOptions.replaceAll('%s', txnId);
 

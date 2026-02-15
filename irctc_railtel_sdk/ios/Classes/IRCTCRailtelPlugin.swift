@@ -99,34 +99,29 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         NSLog("[IRCTCRailtelSDK] TxnId: %@", txnId ?? "nil")
         NSLog("[IRCTCRailtelSDK] PID Options XML (raw): %@", pidOptions)
         
-        // Per UIDAI iOS API Spec v1.3 - Section 2.2 Invocation:
-        // Step 1: Encode PID options as a proper URL query parameter value.
-        // We use a custom character set that keeps only RFC 3986 unreserved characters,
-        // ensuring ALL special XML chars (< > " = ? / etc.) are percent-encoded.
-        // This prevents URL parsing ambiguity with = and ? in the XML.
-        var allowedInValue = CharacterSet.alphanumerics
-        allowedInValue.insert(charactersIn: "-._~")
+        // Per UIDAI iOS API Spec v1.3 - Section 2.2 Invocation (EXACT match):
+        // 1. Build URL string with raw PID XML: FaceRDLib://action?request=<raw_pid>
+        // 2. Encode the ENTIRE URL with .urlQueryAllowed
+        // 3. Create URL from encoded string
+        // This is EXACTLY what the UIDAI sample code does.
+        let customUrl = "FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=\(pidOptions)"
         
-        guard let encodedPid = pidOptions.addingPercentEncoding(withAllowedCharacters: allowedInValue) else {
-            NSLog("[IRCTCRailtelSDK] ERROR: Failed to percent-encode PID options")
+        NSLog("[IRCTCRailtelSDK] Custom URL (before encoding, first 300): %@", String(customUrl.prefix(300)))
+        
+        guard let encodedUrl = customUrl.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            NSLog("[IRCTCRailtelSDK] ERROR: Failed to percent-encode URL")
             result(FlutterError(
                 code: "ENCODE_ERROR",
-                message: "Failed to encode PID options",
+                message: "Failed to encode URL",
                 details: nil
             ))
             return
         }
         
-        NSLog("[IRCTCRailtelSDK] PID Options (encoded): %@", String(encodedPid.prefix(200)))
+        NSLog("[IRCTCRailtelSDK] Encoded URL (first 300): %@", String(encodedUrl.prefix(300)))
         
-        // Step 2: Construct the URL with properly encoded PID value
-        let urlString = "FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=\(encodedPid)"
-        
-        NSLog("[IRCTCRailtelSDK] URL string length: %d", urlString.count)
-        NSLog("[IRCTCRailtelSDK] URL string (first 300 chars): %@", String(urlString.prefix(300)))
-        
-        guard let url = URL(string: urlString) else {
-            NSLog("[IRCTCRailtelSDK] ERROR: Failed to create URL from string")
+        guard let url = URL(string: encodedUrl) else {
+            NSLog("[IRCTCRailtelSDK] ERROR: Failed to create URL from encoded string")
             result(FlutterError(
                 code: "URL_ERROR",
                 message: "Failed to create Face RD URL",
@@ -135,7 +130,7 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
             return
         }
         
-        NSLog("[IRCTCRailtelSDK] URL created successfully: %@", String(url.absoluteString.prefix(300)))
+        NSLog("[IRCTCRailtelSDK] Final URL (first 300): %@", String(url.absoluteString.prefix(300)))
         
         if UIApplication.shared.canOpenURL(url) {
             NSLog("[IRCTCRailtelSDK] canOpenURL: YES - launching Face RD")
