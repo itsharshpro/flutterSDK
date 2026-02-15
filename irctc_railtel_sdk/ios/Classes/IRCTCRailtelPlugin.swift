@@ -86,8 +86,11 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
      * URL does NOT encode = and ? which are valid URL chars but break query
      * parameter parsing when they appear inside the request VALUE.
      *
-     * Without this, the Face RD app's URL parser splits on the first unencoded =
-     * and only receives a partial XML, causing Error 103 (env value not found).
+     * Approach: Use Apple's URLComponents to build the URL properly.
+     * URLComponents handles query value encoding automatically, encoding
+     * = and & (which have special meaning in queries) while leaving
+     * ? and / as-is. This produces the encoding pattern the Face RD app
+     * may expect since it's the standard Apple URL construction method.
      */
     private func launchFaceRD(pidOptions: String, txnId: String?, result: @escaping FlutterResult) {
         if IRCTCRailtelPlugin.pendingResult != nil {
@@ -103,35 +106,26 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         NSLog("[IRCTCRailtelSDK] TxnId: %@", txnId ?? "nil")
         NSLog("[IRCTCRailtelSDK] PID Options XML (raw): %@", pidOptions)
         
-        // STEP 1: Encode the PID XML value with RFC 3986 unreserved characters ONLY.
-        // This ensures ALL special chars (= ? & + / < > " : ; etc.) in the XML
-        // are percent-encoded, preventing the URL parser from misinterpreting them
-        // as URL structural characters.
-        let unreserved = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
-        guard let encodedPidValue = pidOptions.addingPercentEncoding(withAllowedCharacters: unreserved) else {
-            NSLog("[IRCTCRailtelSDK] ERROR: Failed to percent-encode PID XML value")
+        // Use URLComponents - Apple's standard URL builder.
+        // URLComponents.queryItems automatically encodes query values:
+        //   = → %3D (key-value separator)
+        //   & → %26 (pair separator)
+        //   < → %3C, > → %3E, " → %22, space → %20
+        //   But leaves ? and / as-is (valid in query values per RFC 3986)
+        guard var components = URLComponents(string: "FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE") else {
+            NSLog("[IRCTCRailtelSDK] ERROR: Failed to create URLComponents")
             result(FlutterError(
-                code: "ENCODE_ERROR",
-                message: "Failed to encode PID XML",
+                code: "URL_ERROR",
+                message: "Failed to create URL components",
                 details: nil
             ))
             return
         }
         
-        // STEP 2: Build the URL with the properly encoded value.
-        // The URL structure (scheme, host, ?, request=) uses literal characters.
-        // The value portion is fully encoded from step 1.
-        let urlString = "FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=\(encodedPidValue)"
+        components.queryItems = [URLQueryItem(name: "request", value: pidOptions)]
         
-        NSLog("[IRCTCRailtelSDK] Encoded PID value length: %d", encodedPidValue.count)
-        NSLog("[IRCTCRailtelSDK] Full URL string length: %d", urlString.count)
-        // Log the COMPLETE URL for debugging (no truncation)
-        NSLog("[IRCTCRailtelSDK] COMPLETE URL: %@", urlString)
-        
-        // STEP 3: Create URL directly - no additional encoding needed since
-        // the URL structure is clean and the value is fully encoded.
-        guard let url = URL(string: urlString) else {
-            NSLog("[IRCTCRailtelSDK] ERROR: Failed to create URL from string")
+        guard let url = components.url else {
+            NSLog("[IRCTCRailtelSDK] ERROR: Failed to create URL from URLComponents")
             result(FlutterError(
                 code: "URL_ERROR",
                 message: "Failed to create Face RD URL",
@@ -140,7 +134,9 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
             return
         }
         
-        NSLog("[IRCTCRailtelSDK] Final URL: %@", url.absoluteString)
+        NSLog("[IRCTCRailtelSDK] URLComponents query: %@", components.percentEncodedQuery ?? "nil")
+        NSLog("[IRCTCRailtelSDK] COMPLETE URL: %@", url.absoluteString)
+        NSLog("[IRCTCRailtelSDK] URL length: %d", url.absoluteString.count)
         
         if UIApplication.shared.canOpenURL(url) {
             NSLog("[IRCTCRailtelSDK] canOpenURL: YES - launching Face RD")

@@ -18,7 +18,7 @@ class FaceRDService {
   /// Platform channel for native Face RD communication
   static const MethodChannel _channel =
       MethodChannel('irctc_railtel_sdk/face_rd');
-
+  
   // WADH value for KYC mode - must match server configuration
   static const String _wadhValue =
       'DNhD9jrIYSEgfz5PNa1jruNKtp9/fw8mNyL8BcpAvPk=';
@@ -76,15 +76,13 @@ class FaceRDService {
   // - No trailing spaces between elements
   //
   // NOTE on env value:
-  // The iOS Face RD app (UIDAI spec v1.3 - "WIP Draft Release") uses
-  // env="S" (Staging). The production iOS Face RD app from App Store
-  // is currently a staging/pre-production build and rejects env="P".
-  // Android Face RD is separate and uses env="P"/"PP" correctly.
+  // Trying env="PP" (Pre-Production) since both "P" and "S" gave error 103.
+  // The iOS Face RD app may be a pre-production build.
   // =====================================================
 
   static const String _iosPidOptionsProd =
       '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="S">'
+      '<PidOptions ver="1.0" env="PP">'
       '<Opts format="0" pidVer="2.0" otp="" />'
       '<CustOpts>'
       '<Param name="txnId" value="%s"/>'
@@ -93,7 +91,7 @@ class FaceRDService {
 
   static const String _iosPidOptionsDev =
       '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="S">'
+      '<PidOptions ver="1.0" env="PP">'
       '<Opts format="0" pidVer="2.0" otp="" />'
       '<CustOpts>'
       '<Param name="txnId" value="%s"/>'
@@ -102,7 +100,7 @@ class FaceRDService {
 
   static const String _iosPidOptionsKycProd =
       '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="S">'
+      '<PidOptions ver="1.0" env="PP">'
       '<Opts format="0" pidVer="2.0" otp="" wadh="$_wadhValue" />'
       '<CustOpts>'
       '<Param name="txnId" value="%s"/>'
@@ -111,7 +109,7 @@ class FaceRDService {
 
   static const String _iosPidOptionsKycDev =
       '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="S">'
+      '<PidOptions ver="1.0" env="PP">'
       '<Opts format="0" pidVer="2.0" otp="" wadh="$_wadhValue" />'
       '<CustOpts>'
       '<Param name="txnId" value="%s"/>'
@@ -131,9 +129,9 @@ class FaceRDService {
       final result = await _channel.invokeMethod<bool>('isFaceRDAvailable');
       return result ?? false;
     } on PlatformException catch (_) {
-      return false;
+        return false;
     } catch (_) {
-      return false;
+        return false;
     }
   }
 
@@ -157,13 +155,13 @@ class FaceRDService {
     bool enableKyc = true,
   }) async {
     final txnId = const Uuid().v4();
-
+    
     // Select PID Options based on platform, environment, and KYC setting
     // iOS and Android have different PID XML formats per their respective specs
     String pidOptions;
     if (Platform.isIOS) {
       // iOS: Use UIDAI iOS API Spec v1.3 format
-      if (enableKyc) {
+    if (enableKyc) {
         pidOptions = isDemo ? _iosPidOptionsKycDev : _iosPidOptionsKycProd;
       } else {
         pidOptions = isDemo ? _iosPidOptionsDev : _iosPidOptionsProd;
@@ -221,6 +219,6 @@ class FaceRDService {
   static bool handleCallback(Uri uri) {
     // This is now handled natively by the iOS plugin.
     // Kept for backward compatibility - integrators don't need to call this.
-    return false;
+      return false;
   }
 }
