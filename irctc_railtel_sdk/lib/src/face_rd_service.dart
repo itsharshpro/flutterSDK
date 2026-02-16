@@ -81,38 +81,38 @@ class FaceRDService {
   // =====================================================
 
   static const String _iosPidOptionsProd =
-      '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="PP">'
-      '<Opts format="0" pidVer="2.0" otp="" />'
+      '<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>'
+      '<PidOptions ver=\\"1.0\\" env=\\"PP\\">'
+      '<Opts format=\\"0\\" pidVer=\\"2.0\\" otp=\\"\\" />'
       '<CustOpts>'
-      '<Param name="txnId" value="%s"/>'
+      '<Param name=\\"txnId\\" value=\\"%s\\"/>'
       '</CustOpts>'
       '</PidOptions>';
 
   static const String _iosPidOptionsDev =
-      '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="PP">'
-      '<Opts format="0" pidVer="2.0" otp="" />'
+      '<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>'
+      '<PidOptions ver=\\"1.0\\" env=\\"PP\\">'
+      '<Opts format=\\"0\\" pidVer=\\"2.0\\" otp=\\"\\" />'
       '<CustOpts>'
-      '<Param name="txnId" value="%s"/>'
+      '<Param name=\\"txnId\\" value=\\"%s\\"/>'
       '</CustOpts>'
       '</PidOptions>';
 
   static const String _iosPidOptionsKycProd =
-      '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="PP">'
-      '<Opts format="0" pidVer="2.0" otp="" wadh="$_wadhValue" />'
+      '<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>'
+      '<PidOptions ver=\\"1.0\\" env=\\"PP\\">'
+      '<Opts format=\\"0\\" pidVer=\\"2.0\\" otp=\\"\\" wadh=\\"$_wadhValue\\" />'
       '<CustOpts>'
-      '<Param name="txnId" value="%s"/>'
+      '<Param name=\\"txnId\\" value=\\"%s\\"/>'
       '</CustOpts>'
       '</PidOptions>';
 
   static const String _iosPidOptionsKycDev =
-      '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="PP">'
-      '<Opts format="0" pidVer="2.0" otp="" wadh="$_wadhValue" />'
+      '<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>'
+      '<PidOptions ver=\\"1.0\\" env=\\"PP\\">'
+      '<Opts format=\\"0\\" pidVer=\\"2.0\\" otp=\\"\\" wadh=\\"$_wadhValue\\" />'
       '<CustOpts>'
-      '<Param name="txnId" value="%s"/>'
+      '<Param name=\\"txnId\\" value=\\"%s\\"/>'
       '</CustOpts>'
       '</PidOptions>';
 
