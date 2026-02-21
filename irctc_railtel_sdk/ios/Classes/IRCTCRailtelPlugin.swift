@@ -1,20 +1,6 @@
 import Flutter
 import UIKit
 
-/**
- * IRCTCRailtelPlugin - Native iOS plugin for Face RD integration.
- *
- * Handles launching the UIDAI AadhaarFaceRD app via iOS URL Scheme
- * and receiving the PID data back when FaceRD returns to the calling app.
- *
- * iOS Face RD URL Scheme (per UIDAI iOS API Spec v1.3):
- * - Launch: FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=<encoded_pid_options>
- * - Response: Received in application(_:open:options:) when FaceRD calls back
- *
- * IMPORTANT: Integrating apps must add to their Info.plist:
- * 1. LSApplicationQueriesSchemes: ["FaceRDLib"] (to check if FaceRD is installed)
- * 2. CFBundleURLTypes with URL scheme "irctcrailtel" (for FaceRD callback)
- */
 public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLifeCycleDelegate {
     
     private static var channel: FlutterMethodChannel?
@@ -31,6 +17,55 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         let instance = IRCTCRailtelPlugin()
         registrar.addMethodCallDelegate(instance, channel: channel!)
         registrar.addApplicationDelegate(instance)
+        
+        // Log diagnostic info at startup
+        instance.logDiagnostics()
+    }
+    
+    // MARK: - Diagnostics
+    
+    private func logDiagnostics() {
+        NSLog("[IRCTCRailtelSDK] ===== DIAGNOSTICS START =====")
+        
+        // Log registered URL schemes (CFBundleURLTypes)
+        if let urlTypes = Bundle.main.infoDictionary?["CFBundleURLTypes"] as? [[String: Any]] {
+            NSLog("[IRCTCRailtelSDK] Registered URL Types count: %d", urlTypes.count)
+            for (i, urlType) in urlTypes.enumerated() {
+                let identifier = urlType["CFBundleURLName"] as? String ?? "none"
+                let schemes = urlType["CFBundleURLSchemes"] as? [String] ?? []
+                let role = urlType["CFBundleTypeRole"] as? String ?? "none"
+                NSLog("[IRCTCRailtelSDK] URL Type[%d]: identifier=%@, role=%@, schemes=%@", i, identifier, role, schemes.joined(separator: ", "))
+            }
+        } else {
+            NSLog("[IRCTCRailtelSDK] WARNING: No CFBundleURLTypes found in Info.plist!")
+        }
+        
+        // Log queried URL schemes (LSApplicationQueriesSchemes)
+        if let queriedSchemes = Bundle.main.infoDictionary?["LSApplicationQueriesSchemes"] as? [String] {
+            NSLog("[IRCTCRailtelSDK] LSApplicationQueriesSchemes: %@", queriedSchemes.joined(separator: ", "))
+        } else {
+            NSLog("[IRCTCRailtelSDK] WARNING: No LSApplicationQueriesSchemes found in Info.plist!")
+        }
+        
+        // Check if our callback scheme can be opened
+        if let callbackUrl = URL(string: "irctcrailtel://test") {
+            let canOpen = UIApplication.shared.canOpenURL(callbackUrl)
+            NSLog("[IRCTCRailtelSDK] Can open own callback scheme 'irctcrailtel://': %@", canOpen ? "YES" : "NO")
+        }
+        
+        // Check Face RD availability
+        if let faceRDUrl = URL(string: "FaceRDLib://") {
+            let canOpen = UIApplication.shared.canOpenURL(faceRDUrl)
+            NSLog("[IRCTCRailtelSDK] Can open FaceRDLib://: %@", canOpen ? "YES" : "NO")
+        }
+        
+        // Log bundle identifier
+        NSLog("[IRCTCRailtelSDK] Bundle ID: %@", Bundle.main.bundleIdentifier ?? "unknown")
+        
+        // Log iOS version
+        NSLog("[IRCTCRailtelSDK] iOS version: %@", UIDevice.current.systemVersion)
+        
+        NSLog("[IRCTCRailtelSDK] ===== DIAGNOSTICS END =====")
     }
     
     // MARK: - Method Call Handler
@@ -70,20 +105,6 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
     
     // MARK: - Face RD Launch
     
-    /**
-     * Launch Face RD app via iOS URL Scheme.
-     *
-     * Uses the EXACT encoding approach from the UIDAI sample reference code:
-     *   1. Build the raw URL string: "FaceRDLib://...?request=<raw_pid_xml>"
-     *   2. Encode the ENTIRE URL with .urlQueryAllowed
-     *   3. Create URL from the encoded string
-     *
-     * .urlQueryAllowed preserves: =, &, ?, /, :, @, +, ;, $, !, *, ', (, ), ,, -, ., _, ~
-     * .urlQueryAllowed encodes:  <, >, ", space, #, [, ], {, }, \, ^, |
-     *
-     * This means = and & inside XML attribute values stay as literal characters,
-     * which is exactly what the UIDAI sample code produces and the Face RD app expects.
-     */
     private func launchFaceRD(pidOptions: String, txnId: String?, result: @escaping FlutterResult) {
         if IRCTCRailtelPlugin.pendingResult != nil {
             result(FlutterError(
@@ -96,67 +117,76 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         
         NSLog("[IRCTCRailtelSDK] ===== FACE RD LAUNCH START =====")
         NSLog("[IRCTCRailtelSDK] TxnId: %@", txnId ?? "nil")
-        NSLog("[IRCTCRailtelSDK] PID Options XML (raw): %@", pidOptions)
+        NSLog("[IRCTCRailtelSDK] PID Options XML (raw, complete): %@", pidOptions)
+        NSLog("[IRCTCRailtelSDK] PID XML length: %d", pidOptions.count)
         
-        // Step 1: Build the raw URL string with PID XML directly embedded (per UIDAI sample)
+        // Verify callback scheme is in XML
+        if pidOptions.contains("callback") {
+            NSLog("[IRCTCRailtelSDK] CALLBACK param found in PID XML: YES")
+        } else {
+            NSLog("[IRCTCRailtelSDK] WARNING: CALLBACK param NOT found in PID XML!")
+        }
+        
+        // Extract env value for logging
+        if let envRange = pidOptions.range(of: "env=\"") {
+            let envStart = pidOptions.index(envRange.upperBound, offsetBy: 0)
+            if let envEnd = pidOptions[envStart...].firstIndex(of: "\"") {
+                let envValue = String(pidOptions[envStart..<envEnd])
+                NSLog("[IRCTCRailtelSDK] ENV value: '%@'", envValue)
+            }
+        }
+        
+        // Per UIDAI sample: build raw URL then encode entire thing with .urlQueryAllowed
         let customUrl = "FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=\(pidOptions)"
-        NSLog("[IRCTCRailtelSDK] Raw URL (before encoding, first 400): %@", String(customUrl.prefix(400)))
+        NSLog("[IRCTCRailtelSDK] Raw URL length: %d", customUrl.count)
         
-        // Step 2: Encode the ENTIRE URL with .urlQueryAllowed (per UIDAI sample)
         guard let encodedUrl = customUrl.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
-            NSLog("[IRCTCRailtelSDK] ERROR: Failed to percent-encode URL")
-            result(FlutterError(
-                code: "URL_ERROR",
-                message: "Failed to encode Face RD URL",
-                details: nil
-            ))
+            NSLog("[IRCTCRailtelSDK] ERROR: Percent encoding failed")
+            result(FlutterError(code: "URL_ERROR", message: "Failed to encode URL", details: nil))
             return
         }
         
-        NSLog("[IRCTCRailtelSDK] Encoded URL (first 500): %@", String(encodedUrl.prefix(500)))
+        NSLog("[IRCTCRailtelSDK] Encoded URL (complete): %@", encodedUrl)
         NSLog("[IRCTCRailtelSDK] Encoded URL length: %d", encodedUrl.count)
         
-        // Step 3: Create URL from encoded string
         guard let url = URL(string: encodedUrl) else {
-            NSLog("[IRCTCRailtelSDK] ERROR: Failed to create URL from encoded string")
-            result(FlutterError(
-                code: "URL_ERROR",
-                message: "Failed to create Face RD URL",
-                details: nil
-            ))
+            NSLog("[IRCTCRailtelSDK] ERROR: URL creation failed from encoded string")
+            result(FlutterError(code: "URL_ERROR", message: "Failed to create URL", details: nil))
             return
         }
         
-        if UIApplication.shared.canOpenURL(url) {
-            NSLog("[IRCTCRailtelSDK] canOpenURL: YES - launching Face RD")
+        NSLog("[IRCTCRailtelSDK] URL object created successfully")
+        NSLog("[IRCTCRailtelSDK] URL.scheme: %@", url.scheme ?? "nil")
+        NSLog("[IRCTCRailtelSDK] URL.host: %@", url.host ?? "nil")
+        NSLog("[IRCTCRailtelSDK] URL.path: %@", url.path)
+        NSLog("[IRCTCRailtelSDK] URL.query (first 300): %@", String((url.query ?? "nil").prefix(300)))
+        
+        let canOpen = UIApplication.shared.canOpenURL(url)
+        NSLog("[IRCTCRailtelSDK] canOpenURL: %@", canOpen ? "YES" : "NO")
+        
+        if canOpen {
             IRCTCRailtelPlugin.pendingResult = result
             IRCTCRailtelPlugin.pendingTxnId = txnId
             
-            // Store txnId in UserDefaults (per UIDAI sample reference)
             if let txnId = txnId {
                 UserDefaults.standard.set(txnId, forKey: "ReceivedTransactionID")
                 UserDefaults.standard.synchronize()
+                NSLog("[IRCTCRailtelSDK] Stored txnId in UserDefaults: %@", txnId)
             }
             
+            NSLog("[IRCTCRailtelSDK] Calling UIApplication.shared.open...")
             UIApplication.shared.open(url, options: [:]) { success in
                 NSLog("[IRCTCRailtelSDK] UIApplication.open completion: success=%@", success ? "YES" : "NO")
                 if !success {
+                    NSLog("[IRCTCRailtelSDK] ERROR: UIApplication.open returned false")
                     IRCTCRailtelPlugin.pendingResult = nil
                     IRCTCRailtelPlugin.pendingTxnId = nil
-                    result(FlutterError(
-                        code: "LAUNCH_ERROR",
-                        message: "Failed to open Face RD app",
-                        details: nil
-                    ))
+                    result(FlutterError(code: "LAUNCH_ERROR", message: "Failed to open Face RD app", details: nil))
                 }
             }
         } else {
-            NSLog("[IRCTCRailtelSDK] canOpenURL: NO - Face RD not installed")
-            result(FlutterError(
-                code: "NOT_INSTALLED",
-                message: "Face RD app not installed. Please install AadhaarFaceRD from App Store.",
-                details: nil
-            ))
+            NSLog("[IRCTCRailtelSDK] Face RD not installed or FaceRDLib not in LSApplicationQueriesSchemes")
+            result(FlutterError(code: "NOT_INSTALLED", message: "Face RD app not installed", details: nil))
         }
         
         NSLog("[IRCTCRailtelSDK] ===== FACE RD LAUNCH END =====")
@@ -164,17 +194,15 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
     
     // MARK: - URL Callback Handler
     
-    /**
-     * Handle URL callback from Face RD app.
-     * FaceRD returns PID data via the "irctcrailtel" URL scheme callback.
-     */
     public func application(
         _ app: UIApplication,
         open url: URL,
         options: [UIApplication.OpenURLOptionsKey: Any] = [:]
     ) -> Bool {
-        NSLog("[IRCTCRailtelSDK] application:open:options: called with URL scheme: %@, full URL (first 500): %@",
-              url.scheme ?? "nil", String(url.absoluteString.prefix(500)))
+        NSLog("[IRCTCRailtelSDK] ===== URL CALLBACK RECEIVED =====")
+        NSLog("[IRCTCRailtelSDK] URL scheme: %@", url.scheme ?? "nil")
+        NSLog("[IRCTCRailtelSDK] Full URL (first 1000): %@", String(url.absoluteString.prefix(1000)))
+        NSLog("[IRCTCRailtelSDK] Source app: %@", options[.sourceApplication] as? String ?? "unknown")
         return handleIncomingURL(url)
     }
     
@@ -184,22 +212,26 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         sourceApplication: String?,
         annotation: Any
     ) -> Bool {
-        NSLog("[IRCTCRailtelSDK] application:open:sourceApplication: called with URL scheme: %@", url.scheme ?? "nil")
+        NSLog("[IRCTCRailtelSDK] ===== URL CALLBACK RECEIVED (legacy) =====")
+        NSLog("[IRCTCRailtelSDK] URL scheme: %@", url.scheme ?? "nil")
+        NSLog("[IRCTCRailtelSDK] Source app: %@", sourceApplication ?? "unknown")
         return handleIncomingURL(url)
     }
     
-    /**
-     * Parse the incoming URL from FaceRD and extract PID data.
-     */
     private func handleIncomingURL(_ url: URL) -> Bool {
         NSLog("[IRCTCRailtelSDK] handleIncomingURL called")
         NSLog("[IRCTCRailtelSDK] Full URL: %@", url.absoluteString)
+        NSLog("[IRCTCRailtelSDK] URL decoded: %@", url.absoluteString.removingPercentEncoding ?? "decode failed")
         NSLog("[IRCTCRailtelSDK] URL scheme: %@", url.scheme ?? "nil")
         NSLog("[IRCTCRailtelSDK] URL host: %@", url.host ?? "nil")
-        NSLog("[IRCTCRailtelSDK] URL query: %@", String((url.query ?? "nil").prefix(500)))
+        NSLog("[IRCTCRailtelSDK] URL path: %@", url.path)
+        NSLog("[IRCTCRailtelSDK] URL query (first 500): %@", String((url.query ?? "nil").prefix(500)))
+        NSLog("[IRCTCRailtelSDK] URL fragment: %@", url.fragment ?? "nil")
+        NSLog("[IRCTCRailtelSDK] pendingResult exists: %@", IRCTCRailtelPlugin.pendingResult != nil ? "YES" : "NO")
+        NSLog("[IRCTCRailtelSDK] pendingTxnId: %@", IRCTCRailtelPlugin.pendingTxnId ?? "nil")
         
         guard let result = IRCTCRailtelPlugin.pendingResult else {
-            NSLog("[IRCTCRailtelSDK] No pending result - ignoring URL")
+            NSLog("[IRCTCRailtelSDK] No pending result - ignoring URL callback")
             return false
         }
         
@@ -208,105 +240,113 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         var pidData: String?
         var error: String?
         
-        // Parse query parameters
+        // Method 1: Parse query parameters
         if let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
             let queryItems = components.queryItems ?? []
             NSLog("[IRCTCRailtelSDK] Query items count: %d", queryItems.count)
             
             for item in queryItems {
-                NSLog("[IRCTCRailtelSDK] Query item: name='%@', value='%@'", item.name, String((item.value ?? "nil").prefix(200)))
+                NSLog("[IRCTCRailtelSDK] Query item: name='%@', value(first 300)='%@'", item.name, String((item.value ?? "nil").prefix(300)))
                 let name = item.name.lowercased()
                 switch name {
                 case "response", "pid", "piddata", "pid_data", "request":
                     pidData = item.value
+                    NSLog("[IRCTCRailtelSDK] Found PID data in query param '%@', length: %d", item.name, (item.value ?? "").count)
                 case "error", "errormessage", "errmessage", "errcode":
                     error = item.value
+                    NSLog("[IRCTCRailtelSDK] Found error in query param '%@': %@", item.name, item.value ?? "nil")
                 default:
                     break
                 }
             }
         }
         
-        // Check the full URL string for PID data
+        // Method 2: Check full URL string for PID data
         if pidData == nil {
             let urlString = url.absoluteString.removingPercentEncoding ?? url.absoluteString
-            NSLog("[IRCTCRailtelSDK] Checking full URL for PID data (decoded, first 500): %@", String(urlString.prefix(500)))
+            NSLog("[IRCTCRailtelSDK] No PID in query params, checking full URL...")
+            NSLog("[IRCTCRailtelSDK] Decoded URL (first 500): %@", String(urlString.prefix(500)))
             
-            if urlString.contains("<PidData") || urlString.contains("PidData") {
+            if urlString.contains("<PidData") {
                 if let pidStart = urlString.range(of: "<PidData"),
                    let pidEnd = urlString.range(of: "</PidData>") {
-                    let startIdx = pidStart.lowerBound
-                    let endIdx = pidEnd.upperBound
-                    pidData = String(urlString[startIdx..<endIdx])
-                    NSLog("[IRCTCRailtelSDK] Extracted PidData from URL body")
+                    pidData = String(urlString[pidStart.lowerBound..<pidEnd.upperBound])
+                    NSLog("[IRCTCRailtelSDK] Extracted PidData XML, length: %d", (pidData ?? "").count)
                 } else {
                     pidData = urlString
-                    NSLog("[IRCTCRailtelSDK] Using full URL string as PID data")
+                    NSLog("[IRCTCRailtelSDK] PidData start found but no end tag, using full URL")
                 }
-            } else if urlString.contains("errCode") {
+            } else if urlString.contains("errCode") || urlString.contains("Resp") {
                 pidData = urlString
-                NSLog("[IRCTCRailtelSDK] URL contains errCode, using as response")
+                NSLog("[IRCTCRailtelSDK] URL contains response elements, using as PID data")
             }
         }
         
-        // Check URL path for base64 response (per spec section 2.4.2)
+        // Method 3: Check URL path for base64 encoded response
         if pidData == nil {
             let path = url.path
             if !path.isEmpty && path != "/" {
-                NSLog("[IRCTCRailtelSDK] Checking URL path: %@", String(path.prefix(200)))
-                if let decoded = Data(base64Encoded: path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))),
+                NSLog("[IRCTCRailtelSDK] Checking URL path for base64: %@", String(path.prefix(200)))
+                let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                if let decoded = Data(base64Encoded: trimmedPath),
                    let decodedStr = String(data: decoded, encoding: .utf8) {
                     pidData = decodedStr
-                    NSLog("[IRCTCRailtelSDK] Decoded base64 PID from URL path")
+                    NSLog("[IRCTCRailtelSDK] Decoded base64 PID from path, length: %d", decodedStr.count)
                 }
             }
         }
         
-        NSLog("[IRCTCRailtelSDK] Final pidData: %@", pidData != nil ? String((pidData!).prefix(500)) : "nil")
-        NSLog("[IRCTCRailtelSDK] Final error: %@", error ?? "nil")
-        
-        if let pid = pidData, !pid.isEmpty {
-            if pid.contains("errCode=\"0\"") || pid.contains("errCode=&quot;0&quot;") {
-                NSLog("[IRCTCRailtelSDK] SUCCESS - PID captured")
-                result(pid)
-            } else {
-                let pattern = "errInfo=\"(.+?)\""
-                if let regex = try? NSRegularExpression(pattern: pattern),
-                   let match = regex.firstMatch(
-                    in: pid,
-                    range: NSRange(pid.startIndex..., in: pid)
-                   ),
-                   let range = Range(match.range(at: 1), in: pid) {
-                    let errMsg = String(pid[range])
-                    NSLog("[IRCTCRailtelSDK] CAPTURE ERROR: %@", errMsg)
-                    result(FlutterError(
-                        code: "FACE_CAPTURE_ERROR",
-                        message: errMsg,
-                        details: pid
-                    ))
-                } else {
-                    NSLog("[IRCTCRailtelSDK] CAPTURE FAILED - no errInfo found in PID")
-                    result(FlutterError(
-                        code: "FACE_CAPTURE_ERROR",
-                        message: "Face capture failed",
-                        details: pid
-                    ))
+        // Method 4: Check if the entire URL after scheme is the response
+        if pidData == nil {
+            let fullStr = url.absoluteString
+            if let schemeEnd = fullStr.range(of: "://") {
+                let afterScheme = String(fullStr[schemeEnd.upperBound...])
+                let decoded = afterScheme.removingPercentEncoding ?? afterScheme
+                NSLog("[IRCTCRailtelSDK] After scheme (first 300): %@", String(decoded.prefix(300)))
+                if decoded.contains("<") || decoded.contains("PidData") || decoded.contains("errCode") {
+                    pidData = decoded
+                    NSLog("[IRCTCRailtelSDK] Using after-scheme content as PID, length: %d", decoded.count)
                 }
             }
+        }
+        
+        NSLog("[IRCTCRailtelSDK] ===== PARSING RESULT =====")
+        NSLog("[IRCTCRailtelSDK] pidData found: %@, length: %d", pidData != nil ? "YES" : "NO", (pidData ?? "").count)
+        NSLog("[IRCTCRailtelSDK] pidData (first 500): %@", String((pidData ?? "nil").prefix(500)))
+        NSLog("[IRCTCRailtelSDK] error: %@", error ?? "nil")
+        
+        if let pid = pidData, !pid.isEmpty {
+            if pid.contains("errCode=\"0\"") || pid.contains("errCode=&quot;0&quot;") || pid.contains("PID_CREATED") {
+                NSLog("[IRCTCRailtelSDK] SUCCESS - PID captured successfully!")
+                result(pid)
+            } else {
+                // Extract error info
+                let errInfoPattern = "errInfo=\"(.+?)\""
+                let errCodePattern = "errCode=\"(.+?)\""
+                var errMsg = "Face capture failed"
+                var errCode = "unknown"
+                
+                if let regex = try? NSRegularExpression(pattern: errCodePattern),
+                   let match = regex.firstMatch(in: pid, range: NSRange(pid.startIndex..., in: pid)),
+                   let range = Range(match.range(at: 1), in: pid) {
+                    errCode = String(pid[range])
+                }
+                
+                if let regex = try? NSRegularExpression(pattern: errInfoPattern),
+                   let match = regex.firstMatch(in: pid, range: NSRange(pid.startIndex..., in: pid)),
+                   let range = Range(match.range(at: 1), in: pid) {
+                    errMsg = String(pid[range])
+                }
+                
+                NSLog("[IRCTCRailtelSDK] FACE RD ERROR: code=%@, message=%@", errCode, errMsg)
+                result(FlutterError(code: "FACE_CAPTURE_ERROR", message: "Error (\(errCode)): \(errMsg)", details: pid))
+            }
         } else if let err = error {
-            NSLog("[IRCTCRailtelSDK] FACE RD ERROR: %@", err)
-            result(FlutterError(
-                code: "FACE_RD_ERROR",
-                message: err,
-                details: nil
-            ))
+            NSLog("[IRCTCRailtelSDK] ERROR from query param: %@", err)
+            result(FlutterError(code: "FACE_RD_ERROR", message: err, details: nil))
         } else {
-            NSLog("[IRCTCRailtelSDK] NO RESPONSE - cancelled or empty")
-            result(FlutterError(
-                code: "CANCELLED",
-                message: "Face capture cancelled or no response received",
-                details: url.absoluteString
-            ))
+            NSLog("[IRCTCRailtelSDK] NO PID DATA FOUND - treating as cancelled")
+            result(FlutterError(code: "CANCELLED", message: "No response from Face RD", details: url.absoluteString))
         }
         
         IRCTCRailtelPlugin.pendingTxnId = nil
@@ -316,18 +356,22 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
     // MARK: - App Lifecycle
     
     public func applicationDidBecomeActive(_ application: UIApplication) {
-        NSLog("[IRCTCRailtelSDK] applicationDidBecomeActive - pendingResult exists: %@",
-              IRCTCRailtelPlugin.pendingResult != nil ? "YES" : "NO")
+        NSLog("[IRCTCRailtelSDK] ===== APP BECAME ACTIVE =====")
+        NSLog("[IRCTCRailtelSDK] pendingResult exists: %@", IRCTCRailtelPlugin.pendingResult != nil ? "YES" : "NO")
+        NSLog("[IRCTCRailtelSDK] pendingTxnId: %@", IRCTCRailtelPlugin.pendingTxnId ?? "nil")
         
         if IRCTCRailtelPlugin.pendingResult != nil {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            NSLog("[IRCTCRailtelSDK] Waiting 5s for Face RD URL callback...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
                 if let result = IRCTCRailtelPlugin.pendingResult {
-                    NSLog("[IRCTCRailtelSDK] Timeout - no URL callback received after 3s, treating as cancelled")
+                    NSLog("[IRCTCRailtelSDK] TIMEOUT - No URL callback received after 5s")
+                    NSLog("[IRCTCRailtelSDK] Face RD did NOT call back to irctcrailtel:// scheme")
+                    NSLog("[IRCTCRailtelSDK] This means Face RD either: (a) errored out, (b) user cancelled, or (c) callback scheme not recognized by Face RD")
                     IRCTCRailtelPlugin.pendingResult = nil
                     IRCTCRailtelPlugin.pendingTxnId = nil
                     result(FlutterError(
                         code: "CANCELLED",
-                        message: "Face capture was cancelled or Face RD app did not return a response",
+                        message: "Face RD did not return a response. The capture may have timed out or been cancelled.",
                         details: nil
                     ))
                 }
