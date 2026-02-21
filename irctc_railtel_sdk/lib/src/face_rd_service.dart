@@ -18,10 +18,13 @@ class FaceRDService {
   /// Platform channel for native Face RD communication
   static const MethodChannel _channel =
       MethodChannel('irctc_railtel_sdk/face_rd');
-  
+
   // WADH value for KYC mode - must match server configuration
   static const String _wadhValue =
       'DNhD9jrIYSEgfz5PNa1jruNKtp9/fw8mNyL8BcpAvPk=';
+
+  // Callback URL scheme for iOS Face RD response
+  static const String _iosCallbackScheme = 'irctcrailtel';
 
   // =====================================================
   // ANDROID PID Options (used with Intent extras - no URL encoding needed)
@@ -69,112 +72,89 @@ class FaceRDService {
       '</PidOptions>';
 
   // =====================================================
-  // iOS PID Options (matching UIDAI iOS API Spec v1.3 Section 2.3)
-  // - No posh attribute (reserved on iOS, error code 126)
-  // - No <Demo> element (not in iOS spec)
+  // iOS PID Options (matching UIDAI iOS API Spec v1.3 rev1 2025-05-20)
+  // Key differences from Android:
+  // - Has "callback" param (MANDATORY per new spec)
   // - Has otp="" in Opts (per iOS spec)
-  // - No trailing spaces between elements
-  //
-  // NOTE on env value:
-  // Trying env="PP" (Pre-Production) since both "P" and "S" gave error 103.
-  // The iOS Face RD app may be a pre-production build.
+  // - No posh attribute
+  // - No <Demo> element
   // =====================================================
 
-  static const String _iosPidOptionsProd =
-      '<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>'
-      '<PidOptions ver=\\"1.0\\" env=\\"PP\\">'
-      '<Opts format=\\"0\\" pidVer=\\"2.0\\" otp=\\"\\" />'
+  static String _iosPidOptionsProd(String txnId) =>
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<PidOptions ver="1.0" env="P">'
+      '<Opts format="0" pidVer="2.0" otp="" />'
       '<CustOpts>'
-      '<Param name=\\"txnId\\" value=\\"%s\\"/>'
+      '<Param name="txnId" value="$txnId"/>'
+      '<Param name="callback" value="$_iosCallbackScheme"/>'
       '</CustOpts>'
       '</PidOptions>';
 
-  static const String _iosPidOptionsDev =
-      '<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>'
-      '<PidOptions ver=\\"1.0\\" env=\\"PP\\">'
-      '<Opts format=\\"0\\" pidVer=\\"2.0\\" otp=\\"\\" />'
+  static String _iosPidOptionsDev(String txnId) =>
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<PidOptions ver="1.0" env="PP">'
+      '<Opts format="0" pidVer="2.0" otp="" />'
       '<CustOpts>'
-      '<Param name=\\"txnId\\" value=\\"%s\\"/>'
+      '<Param name="txnId" value="$txnId"/>'
+      '<Param name="callback" value="$_iosCallbackScheme"/>'
       '</CustOpts>'
       '</PidOptions>';
 
-  static const String _iosPidOptionsKycProd =
-      '<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>'
-      '<PidOptions ver=\\"1.0\\" env=\\"PP\\">'
-      '<Opts format=\\"0\\" pidVer=\\"2.0\\" otp=\\"\\" wadh=\\"$_wadhValue\\" />'
+  static String _iosPidOptionsKycProd(String txnId) =>
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<PidOptions ver="1.0" env="P">'
+      '<Opts format="0" pidVer="2.0" otp="" wadh="$_wadhValue" />'
       '<CustOpts>'
-      '<Param name=\\"txnId\\" value=\\"%s\\"/>'
+      '<Param name="txnId" value="$txnId"/>'
+      '<Param name="callback" value="$_iosCallbackScheme"/>'
       '</CustOpts>'
       '</PidOptions>';
 
-  static const String _iosPidOptionsKycDev =
-      '<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>'
-      '<PidOptions ver=\\"1.0\\" env=\\"PP\\">'
-      '<Opts format=\\"0\\" pidVer=\\"2.0\\" otp=\\"\\" wadh=\\"$_wadhValue\\" />'
+  static String _iosPidOptionsKycDev(String txnId) =>
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<PidOptions ver="1.0" env="PP">'
+      '<Opts format="0" pidVer="2.0" otp="" wadh="$_wadhValue" />'
       '<CustOpts>'
-      '<Param name=\\"txnId\\" value=\\"%s\\"/>'
+      '<Param name="txnId" value="$txnId"/>'
+      '<Param name="callback" value="$_iosCallbackScheme"/>'
       '</CustOpts>'
       '</PidOptions>';
 
   /// Check if Face RD app is available on the device.
-  ///
-  /// On Android: Checks if any app can handle the CAPTURE intent.
-  ///             Requires <queries> in AndroidManifest.xml (handled by SDK).
-  /// On iOS: Checks if FaceRDLib:// URL scheme can be opened.
-  ///         Requires LSApplicationQueriesSchemes in Info.plist.
-  ///
-  /// Returns true if Face RD is available, false otherwise.
   static Future<bool> isFaceRDAvailable() async {
     try {
       final result = await _channel.invokeMethod<bool>('isFaceRDAvailable');
       return result ?? false;
     } on PlatformException catch (_) {
-        return false;
+      return false;
     } catch (_) {
-        return false;
+      return false;
     }
   }
 
   /// Start face capture using the Face RD app.
-  ///
-  /// [isDemo] - true for pre-production environment (env="PP"), false for production (env="P")
-  /// [enableKyc] - true to include WADH in PID options (required for eKYC transactions)
-  ///
-  /// Returns PID XML data string on success.
-  /// Throws [Exception] on error with descriptive message.
-  ///
-  /// Error codes from Face RD:
-  /// - 0: Success
-  /// - 100-129: Integration errors
-  /// - 731: User abort
-  /// - 736-738: Capture quality issues
-  /// - 850-892: App/device issues
-  /// - 901-904: Resource/network errors
   static Future<String> capture({
     required bool isDemo,
     bool enableKyc = true,
   }) async {
     final txnId = const Uuid().v4();
-    
-    // Select PID Options based on platform, environment, and KYC setting
-    // iOS and Android have different PID XML formats per their respective specs
-    String pidOptions;
+
+    String pidXml;
     if (Platform.isIOS) {
-      // iOS: Use UIDAI iOS API Spec v1.3 format
-    if (enableKyc) {
-        pidOptions = isDemo ? _iosPidOptionsKycDev : _iosPidOptionsKycProd;
+      if (enableKyc) {
+        pidXml = isDemo ? _iosPidOptionsKycDev(txnId) : _iosPidOptionsKycProd(txnId);
       } else {
-        pidOptions = isDemo ? _iosPidOptionsDev : _iosPidOptionsProd;
+        pidXml = isDemo ? _iosPidOptionsDev(txnId) : _iosPidOptionsProd(txnId);
       }
     } else {
-      // Android: Use working native Android SDK format
+      String pidOptions;
       if (enableKyc) {
         pidOptions = isDemo ? _androidPidOptionsKycDev : _androidPidOptionsKycProd;
       } else {
         pidOptions = isDemo ? _androidPidOptionsDev : _androidPidOptionsProd;
       }
+      pidXml = pidOptions.replaceAll('%s', txnId);
     }
-    final pidXml = pidOptions.replaceAll('%s', txnId);
 
     try {
       final result = await _channel.invokeMethod<String>('launchFaceRD', {
@@ -188,7 +168,6 @@ class FaceRDService {
 
       return result;
     } on PlatformException catch (e) {
-      // Map platform-specific errors to user-friendly messages
       switch (e.code) {
         case 'NOT_INSTALLED':
           throw Exception(
@@ -210,15 +189,7 @@ class FaceRDService {
   }
 
   /// Handle URL callback from Face RD (iOS only).
-  ///
-  /// Call this from your AppDelegate's application(_:open:options:)
-  /// if you need manual URL handling. The SDK plugin handles this
-  /// automatically when registered as an application delegate.
-  ///
-  /// Returns true if the URL was handled by Face RD service.
   static bool handleCallback(Uri uri) {
-    // This is now handled natively by the iOS plugin.
-    // Kept for backward compatibility - integrators don't need to call this.
-      return false;
+    return false;
   }
 }

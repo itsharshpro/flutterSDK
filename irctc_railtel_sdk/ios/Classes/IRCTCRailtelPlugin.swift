@@ -9,11 +9,11 @@ import UIKit
  *
  * iOS Face RD URL Scheme (per UIDAI iOS API Spec v1.3):
  * - Launch: FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=<encoded_pid_options>
- * - Response: Received in application(_:open:options:) when FaceRD returns
+ * - Response: Received in application(_:open:options:) when FaceRD calls back
  *
  * IMPORTANT: Integrating apps must add to their Info.plist:
  * 1. LSApplicationQueriesSchemes: ["FaceRDLib"] (to check if FaceRD is installed)
- * 2. CFBundleURLTypes with their app's URL scheme (for FaceRD callback)
+ * 2. CFBundleURLTypes with URL scheme "irctcrailtel" (for FaceRD callback)
  */
 public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLifeCycleDelegate {
     
@@ -58,10 +58,6 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
     
     // MARK: - Face RD Availability Check
     
-    /**
-     * Check if AadhaarFaceRD app is installed on the device.
-     * Requires LSApplicationQueriesSchemes to include "FaceRDLib" in Info.plist.
-     */
     private func checkFaceRDAvailable(result: @escaping FlutterResult) {
         guard let url = URL(string: "FaceRDLib://") else {
             result(false)
@@ -77,20 +73,16 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
     /**
      * Launch Face RD app via iOS URL Scheme.
      *
-     * Per UIDAI iOS API Spec v1.3:
-     * URL format: FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=<encoded_pid_options>
+     * Uses the EXACT encoding approach from the UIDAI sample reference code:
+     *   1. Build the raw URL string: "FaceRDLib://...?request=<raw_pid_xml>"
+     *   2. Encode the ENTIRE URL with .urlQueryAllowed
+     *   3. Create URL from the encoded string
      *
-     * CRITICAL ENCODING NOTE:
-     * The PID XML value must be encoded SEPARATELY with a strict charset that
-     * also encodes = ? & + / characters. Using .urlQueryAllowed on the entire
-     * URL does NOT encode = and ? which are valid URL chars but break query
-     * parameter parsing when they appear inside the request VALUE.
+     * .urlQueryAllowed preserves: =, &, ?, /, :, @, +, ;, $, !, *, ', (, ), ,, -, ., _, ~
+     * .urlQueryAllowed encodes:  <, >, ", space, #, [, ], {, }, \, ^, |
      *
-     * Approach: Use Apple's URLComponents to build the URL properly.
-     * URLComponents handles query value encoding automatically, encoding
-     * = and & (which have special meaning in queries) while leaving
-     * ? and / as-is. This produces the encoding pattern the Face RD app
-     * may expect since it's the standard Apple URL construction method.
+     * This means = and & inside XML attribute values stay as literal characters,
+     * which is exactly what the UIDAI sample code produces and the Face RD app expects.
      */
     private func launchFaceRD(pidOptions: String, txnId: String?, result: @escaping FlutterResult) {
         if IRCTCRailtelPlugin.pendingResult != nil {
@@ -106,26 +98,27 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         NSLog("[IRCTCRailtelSDK] TxnId: %@", txnId ?? "nil")
         NSLog("[IRCTCRailtelSDK] PID Options XML (raw): %@", pidOptions)
         
-        // Use URLComponents - Apple's standard URL builder.
-        // URLComponents.queryItems automatically encodes query values:
-        //   = → %3D (key-value separator)
-        //   & → %26 (pair separator)
-        //   < → %3C, > → %3E, " → %22, space → %20
-        //   But leaves ? and / as-is (valid in query values per RFC 3986)
-        guard var components = URLComponents(string: "FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE") else {
-            NSLog("[IRCTCRailtelSDK] ERROR: Failed to create URLComponents")
+        // Step 1: Build the raw URL string with PID XML directly embedded (per UIDAI sample)
+        let customUrl = "FaceRDLib://in.gov.uidai.rdservice.face.CAPTURE?request=\(pidOptions)"
+        NSLog("[IRCTCRailtelSDK] Raw URL (before encoding, first 400): %@", String(customUrl.prefix(400)))
+        
+        // Step 2: Encode the ENTIRE URL with .urlQueryAllowed (per UIDAI sample)
+        guard let encodedUrl = customUrl.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            NSLog("[IRCTCRailtelSDK] ERROR: Failed to percent-encode URL")
             result(FlutterError(
                 code: "URL_ERROR",
-                message: "Failed to create URL components",
+                message: "Failed to encode Face RD URL",
                 details: nil
             ))
             return
         }
         
-        components.queryItems = [URLQueryItem(name: "request", value: pidOptions)]
+        NSLog("[IRCTCRailtelSDK] Encoded URL (first 500): %@", String(encodedUrl.prefix(500)))
+        NSLog("[IRCTCRailtelSDK] Encoded URL length: %d", encodedUrl.count)
         
-        guard let url = components.url else {
-            NSLog("[IRCTCRailtelSDK] ERROR: Failed to create URL from URLComponents")
+        // Step 3: Create URL from encoded string
+        guard let url = URL(string: encodedUrl) else {
+            NSLog("[IRCTCRailtelSDK] ERROR: Failed to create URL from encoded string")
             result(FlutterError(
                 code: "URL_ERROR",
                 message: "Failed to create Face RD URL",
@@ -133,10 +126,6 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
             ))
             return
         }
-        
-        NSLog("[IRCTCRailtelSDK] URLComponents query: %@", components.percentEncodedQuery ?? "nil")
-        NSLog("[IRCTCRailtelSDK] COMPLETE URL: %@", url.absoluteString)
-        NSLog("[IRCTCRailtelSDK] URL length: %d", url.absoluteString.count)
         
         if UIApplication.shared.canOpenURL(url) {
             NSLog("[IRCTCRailtelSDK] canOpenURL: YES - launching Face RD")
@@ -177,35 +166,30 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
     
     /**
      * Handle URL callback from Face RD app.
-     * FaceRD returns PID data via the calling app's URL scheme.
+     * FaceRD returns PID data via the "irctcrailtel" URL scheme callback.
      */
     public func application(
         _ app: UIApplication,
         open url: URL,
         options: [UIApplication.OpenURLOptionsKey: Any] = [:]
     ) -> Bool {
-        NSLog("[IRCTCRailtelSDK] application:open:options: called with URL: %@", String(url.absoluteString.prefix(500)))
+        NSLog("[IRCTCRailtelSDK] application:open:options: called with URL scheme: %@, full URL (first 500): %@",
+              url.scheme ?? "nil", String(url.absoluteString.prefix(500)))
         return handleIncomingURL(url)
     }
     
-    // Also handle the older delegate method
     public func application(
         _ application: UIApplication,
         open url: URL,
         sourceApplication: String?,
         annotation: Any
     ) -> Bool {
-        NSLog("[IRCTCRailtelSDK] application:open:sourceApplication: called with URL: %@", String(url.absoluteString.prefix(500)))
+        NSLog("[IRCTCRailtelSDK] application:open:sourceApplication: called with URL scheme: %@", url.scheme ?? "nil")
         return handleIncomingURL(url)
     }
     
     /**
      * Parse the incoming URL from FaceRD and extract PID data.
-     *
-     * Per UIDAI iOS API Spec, the response PidData includes:
-     * - Resp element with errCode, errInfo
-     * - DeviceInfo, Skey, Hmac, Data elements
-     * - CustOpts with txnId and txnStatus
      */
     private func handleIncomingURL(_ url: URL) -> Bool {
         NSLog("[IRCTCRailtelSDK] handleIncomingURL called")
@@ -221,16 +205,10 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         
         IRCTCRailtelPlugin.pendingResult = nil
         
-        // Try to extract PID data from the URL
-        // Face RD may return data in different ways:
-        // 1. As a query parameter (response=<pid_xml>)
-        // 2. As the URL itself containing PID XML
-        // 3. Via URL path/fragment
-        
         var pidData: String?
         var error: String?
         
-        // Method 1: Parse query parameters
+        // Parse query parameters
         if let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
             let queryItems = components.queryItems ?? []
             NSLog("[IRCTCRailtelSDK] Query items count: %d", queryItems.count)
@@ -249,13 +227,12 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
             }
         }
         
-        // Method 2: Check the full URL string for PID data
+        // Check the full URL string for PID data
         if pidData == nil {
             let urlString = url.absoluteString.removingPercentEncoding ?? url.absoluteString
             NSLog("[IRCTCRailtelSDK] Checking full URL for PID data (decoded, first 500): %@", String(urlString.prefix(500)))
             
             if urlString.contains("<PidData") || urlString.contains("PidData") {
-                // Try to extract PidData XML from the URL
                 if let pidStart = urlString.range(of: "<PidData"),
                    let pidEnd = urlString.range(of: "</PidData>") {
                     let startIdx = pidStart.lowerBound
@@ -272,12 +249,11 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
             }
         }
         
-        // Method 3: Check URL path for base64 response (per spec section 2.4.2)
+        // Check URL path for base64 response (per spec section 2.4.2)
         if pidData == nil {
             let path = url.path
             if !path.isEmpty && path != "/" {
                 NSLog("[IRCTCRailtelSDK] Checking URL path: %@", String(path.prefix(200)))
-                // Try base64 decode
                 if let decoded = Data(base64Encoded: path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))),
                    let decodedStr = String(data: decoded, encoding: .utf8) {
                     pidData = decodedStr
@@ -291,11 +267,9 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         
         if let pid = pidData, !pid.isEmpty {
             if pid.contains("errCode=\"0\"") || pid.contains("errCode=&quot;0&quot;") {
-                // Success - PID captured successfully
                 NSLog("[IRCTCRailtelSDK] SUCCESS - PID captured")
                 result(pid)
             } else {
-                // Extract error from PID XML
                 let pattern = "errInfo=\"(.+?)\""
                 if let regex = try? NSRegularExpression(pattern: pattern),
                    let match = regex.firstMatch(
@@ -339,19 +313,12 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         return true
     }
     
-    // MARK: - App Lifecycle (for handling return from FaceRD without URL)
+    // MARK: - App Lifecycle
     
-    /**
-     * If the user returns to the app without FaceRD providing a URL callback,
-     * we need to handle the timeout/cancellation.
-     */
     public func applicationDidBecomeActive(_ application: UIApplication) {
         NSLog("[IRCTCRailtelSDK] applicationDidBecomeActive - pendingResult exists: %@",
               IRCTCRailtelPlugin.pendingResult != nil ? "YES" : "NO")
         
-        // Give FaceRD a moment to deliver the URL callback
-        // If no callback received within 3 seconds of becoming active,
-        // the capture was likely cancelled
         if IRCTCRailtelPlugin.pendingResult != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                 if let result = IRCTCRailtelPlugin.pendingResult {
