@@ -120,12 +120,10 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         NSLog("[IRCTCRailtelSDK] PID Options XML (raw, complete): %@", pidOptions)
         NSLog("[IRCTCRailtelSDK] PID XML length: %d", pidOptions.count)
         
-        // Verify callback scheme is in XML
-        if pidOptions.contains("callback") {
-            NSLog("[IRCTCRailtelSDK] CALLBACK param found in PID XML: YES")
-        } else {
-            NSLog("[IRCTCRailtelSDK] WARNING: CALLBACK param NOT found in PID XML!")
-        }
+        // Log callback and wadh presence
+        NSLog("[IRCTCRailtelSDK] Has callback param: %@", pidOptions.contains("callback") ? "YES" : "NO")
+        NSLog("[IRCTCRailtelSDK] Has wadh param: %@", pidOptions.contains("wadh") ? "YES" : "NO")
+        NSLog("[IRCTCRailtelSDK] Has timeout param: %@", pidOptions.contains("timeout") ? "YES" : "NO")
         
         // Extract env value for logging
         if let envRange = pidOptions.range(of: "env=\"") {
@@ -360,20 +358,59 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         NSLog("[IRCTCRailtelSDK] pendingResult exists: %@", IRCTCRailtelPlugin.pendingResult != nil ? "YES" : "NO")
         NSLog("[IRCTCRailtelSDK] pendingTxnId: %@", IRCTCRailtelPlugin.pendingTxnId ?? "nil")
         
+        // Check if there's a stored txnId from Face RD (per UIDAI sample)
+        let storedTxnId = UserDefaults.standard.string(forKey: "ReceivedTransactionID")
+        NSLog("[IRCTCRailtelSDK] Stored txnId in UserDefaults: %@", storedTxnId ?? "nil")
+        
+        // Check UIPasteboard for any data from Face RD
+        let pasteboardStr = UIPasteboard.general.string ?? "nil"
+        if pasteboardStr.contains("PidData") || pasteboardStr.contains("errCode") {
+            NSLog("[IRCTCRailtelSDK] FOUND PID data in pasteboard! Length: %d", pasteboardStr.count)
+            NSLog("[IRCTCRailtelSDK] Pasteboard (first 500): %@", String(pasteboardStr.prefix(500)))
+        } else {
+            NSLog("[IRCTCRailtelSDK] No PID data in pasteboard")
+        }
+        
         if IRCTCRailtelPlugin.pendingResult != nil {
-            NSLog("[IRCTCRailtelSDK] Waiting 5s for Face RD URL callback...")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-                if let result = IRCTCRailtelPlugin.pendingResult {
-                    NSLog("[IRCTCRailtelSDK] TIMEOUT - No URL callback received after 5s")
-                    NSLog("[IRCTCRailtelSDK] Face RD did NOT call back to irctcrailtel:// scheme")
-                    NSLog("[IRCTCRailtelSDK] This means Face RD either: (a) errored out, (b) user cancelled, or (c) callback scheme not recognized by Face RD")
-                    IRCTCRailtelPlugin.pendingResult = nil
-                    IRCTCRailtelPlugin.pendingTxnId = nil
-                    result(FlutterError(
-                        code: "CANCELLED",
-                        message: "Face RD did not return a response. The capture may have timed out or been cancelled.",
-                        details: nil
-                    ))
+            NSLog("[IRCTCRailtelSDK] Waiting 10s for Face RD URL callback...")
+            
+            // Check at 2s, 5s, and 10s intervals
+            for delay in [2.0, 5.0, 10.0] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    if IRCTCRailtelPlugin.pendingResult != nil {
+                        NSLog("[IRCTCRailtelSDK] Still waiting at %.0fs... pendingResult exists: YES", delay)
+                        
+                        if delay >= 10.0 {
+                            if let result = IRCTCRailtelPlugin.pendingResult {
+                                NSLog("[IRCTCRailtelSDK] ===== TIMEOUT - NO CALLBACK AFTER 10s =====")
+                                NSLog("[IRCTCRailtelSDK] Face RD did NOT call back via URL scheme")
+                                NSLog("[IRCTCRailtelSDK] Possible causes:")
+                                NSLog("[IRCTCRailtelSDK]   1. Face RD errored (e.g. 739 timeout) and doesn't send callback on error")
+                                NSLog("[IRCTCRailtelSDK]   2. Face RD doesn't know our URL scheme")
+                                NSLog("[IRCTCRailtelSDK]   3. UIDAI server processing timed out inside Face RD")
+                                
+                                // Final pasteboard check
+                                let finalPaste = UIPasteboard.general.string ?? ""
+                                if finalPaste.contains("PidData") || finalPaste.contains("errCode") {
+                                    NSLog("[IRCTCRailtelSDK] PID data appeared in pasteboard! Returning it.")
+                                    IRCTCRailtelPlugin.pendingResult = nil
+                                    IRCTCRailtelPlugin.pendingTxnId = nil
+                                    result(finalPaste)
+                                    return
+                                }
+                                
+                                IRCTCRailtelPlugin.pendingResult = nil
+                                IRCTCRailtelPlugin.pendingTxnId = nil
+                                result(FlutterError(
+                                    code: "FACE_RD_TIMEOUT",
+                                    message: "Face RD did not return a response. The Face RD app may have encountered a server error (e.g. timeout 739). Please check internet connectivity and try again.",
+                                    details: nil
+                                ))
+                            }
+                        }
+                    } else {
+                        NSLog("[IRCTCRailtelSDK] At %.0fs: pendingResult is nil (callback already received or handled)", delay)
+                    }
                 }
             }
         }

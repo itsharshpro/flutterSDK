@@ -4,31 +4,15 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
-/// Face RD Service for Flutter
-///
-/// Handles launching the UIDAI AadhaarFaceRD app on Android and iOS
-/// through native platform channels.
-///
-/// Android: Uses native startActivityForResult to launch Face RD and get PID data back
-/// iOS: Uses URL Scheme (FaceRDLib://) per UIDAI iOS API Spec v1.3
-///
-/// This service is used internally by the SDK. Integrators should not need to
-/// call this directly - instead use [IRCTCRailtelSDK.startVerification].
 class FaceRDService {
-  /// Platform channel for native Face RD communication
   static const MethodChannel _channel =
       MethodChannel('irctc_railtel_sdk/face_rd');
 
-  // WADH value for KYC mode - must match server configuration
   static const String _wadhValue =
       'DNhD9jrIYSEgfz5PNa1jruNKtp9/fw8mNyL8BcpAvPk=';
 
-  // Callback URL scheme for iOS Face RD response
-  static const String _iosCallbackScheme = 'irctcrailtel';
-
   // =====================================================
-  // ANDROID PID Options (used with Intent extras - no URL encoding needed)
-  // Matches the working native Android SDK format exactly
+  // ANDROID PID Options - matches native Android SDK exactly
   // =====================================================
 
   static const String _androidPidOptionsProd =
@@ -72,55 +56,52 @@ class FaceRDService {
       '</PidOptions>';
 
   // =====================================================
-  // iOS PID Options (matching UIDAI iOS API Spec v1.3 rev1 2025-05-20)
-  // Key differences from Android:
-  // - Has "callback" param (MANDATORY per new spec)
-  // - Has otp="" in Opts (per iOS spec)
-  // - No posh attribute
-  // - No <Demo> element
+  // iOS PID Options - per UIDAI iOS API Spec v1.3
+  // NO callback param — Face RD returns via URL scheme automatically.
+  // callback param was CAUSING the Face RD to try HTTP POST which timed out.
+  // Added timeout="60000" (60s) to give more processing time.
   // =====================================================
-
-  static String _iosPidOptionsProd(String txnId) =>
-      '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="P">'
-      '<Opts format="0" pidVer="2.0" otp="" />'
-      '<CustOpts>'
-      '<Param name="txnId" value="$txnId"/>'
-      '<Param name="callback" value="$_iosCallbackScheme"/>'
-      '</CustOpts>'
-      '</PidOptions>';
-
-  static String _iosPidOptionsDev(String txnId) =>
-      '<?xml version="1.0" encoding="UTF-8"?>'
-      '<PidOptions ver="1.0" env="PP">'
-      '<Opts format="0" pidVer="2.0" otp="" />'
-      '<CustOpts>'
-      '<Param name="txnId" value="$txnId"/>'
-      '<Param name="callback" value="$_iosCallbackScheme"/>'
-      '</CustOpts>'
-      '</PidOptions>';
 
   static String _iosPidOptionsKycProd(String txnId) =>
       '<?xml version="1.0" encoding="UTF-8"?>'
       '<PidOptions ver="1.0" env="P">'
-      '<Opts format="0" pidVer="2.0" otp="" wadh="$_wadhValue" />'
+      '<Opts format="0" pidVer="2.0" timeout="60000" otp="" wadh="$_wadhValue" />'
       '<CustOpts>'
       '<Param name="txnId" value="$txnId"/>'
-      '<Param name="callback" value="$_iosCallbackScheme"/>'
+      '<Param name="callback" value="irctcrailtel://capture/response"/>'
       '</CustOpts>'
       '</PidOptions>';
 
   static String _iosPidOptionsKycDev(String txnId) =>
       '<?xml version="1.0" encoding="UTF-8"?>'
       '<PidOptions ver="1.0" env="PP">'
-      '<Opts format="0" pidVer="2.0" otp="" wadh="$_wadhValue" />'
+      '<Opts format="0" pidVer="2.0" timeout="60000" otp="" wadh="$_wadhValue" />'
       '<CustOpts>'
       '<Param name="txnId" value="$txnId"/>'
-      '<Param name="callback" value="$_iosCallbackScheme"/>'
+      '<Param name="callback" value="irctcrailtel://capture/response"/>'
       '</CustOpts>'
       '</PidOptions>';
 
-  /// Check if Face RD app is available on the device.
+  static String _iosPidOptionsProd(String txnId) =>
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<PidOptions ver="1.0" env="P">'
+      '<Opts format="0" pidVer="2.0" timeout="60000" otp="" />'
+      '<CustOpts>'
+      '<Param name="txnId" value="$txnId"/>'
+      '<Param name="callback" value="irctcrailtel://capture/response"/>'
+      '</CustOpts>'
+      '</PidOptions>';
+
+  static String _iosPidOptionsDev(String txnId) =>
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<PidOptions ver="1.0" env="PP">'
+      '<Opts format="0" pidVer="2.0" timeout="60000" otp="" />'
+      '<CustOpts>'
+      '<Param name="txnId" value="$txnId"/>'
+      '<Param name="callback" value="irctcrailtel://capture/response"/>'
+      '</CustOpts>'
+      '</PidOptions>';
+
   static Future<bool> isFaceRDAvailable() async {
     try {
       final result = await _channel.invokeMethod<bool>('isFaceRDAvailable');
@@ -132,7 +113,6 @@ class FaceRDService {
     }
   }
 
-  /// Start face capture using the Face RD app.
   static Future<String> capture({
     required bool isDemo,
     bool enableKyc = true,
@@ -188,7 +168,6 @@ class FaceRDService {
     }
   }
 
-  /// Handle URL callback from Face RD (iOS only).
   static bool handleCallback(Uri uri) {
     return false;
   }
