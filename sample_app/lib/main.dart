@@ -7,7 +7,7 @@ void main() async {
   // Initialize SDK with configuration
   await IRCTCRailtelSDK.initialize(
     config: SDKConfig(
-      environment: Environment.production,  // Use Environment.demo for testing
+      environment: Environment.demo,  // Use Environment.demo for testing
       enableOtp: true,   // Enable OTP verification option
     ),
   );

@@ -310,7 +310,25 @@ public class IRCTCRailtelPlugin: NSObject, FlutterPlugin, FlutterApplicationLife
         
         NSLog("[IRCTCRailtelSDK] ===== PARSING RESULT =====")
         NSLog("[IRCTCRailtelSDK] pidData found: %@, length: %d", pidData != nil ? "YES" : "NO", (pidData ?? "").count)
-        NSLog("[IRCTCRailtelSDK] pidData (first 500): %@", String((pidData ?? "nil").prefix(500)))
+        
+        // Log the FULL PID XML once so backend team can see ci, Skey, etc.
+        if let fullPid = pidData {
+            NSLog("[IRCTCRailtelSDK] pidData (FULL XML): %@", fullPid)
+            
+            // Additionally extract and log the ci attribute from <Skey ci=\"...\">
+            let ciPattern = "ci=\\\"(.+?)\\\""
+            if let regex = try? NSRegularExpression(pattern: ciPattern),
+               let match = regex.firstMatch(in: fullPid, range: NSRange(fullPid.startIndex..., in: fullPid)),
+               let range = Range(match.range(at: 1), in: fullPid) {
+                let ciValue = String(fullPid[range])
+                NSLog("[IRCTCRailtelSDK] Skey ci value: %@", ciValue)
+            } else {
+                NSLog("[IRCTCRailtelSDK] Skey ci value: NOT FOUND in PID XML")
+            }
+        } else {
+            NSLog("[IRCTCRailtelSDK] pidData is nil (no XML to log)")
+        }
+        
         NSLog("[IRCTCRailtelSDK] error: %@", error ?? "nil")
         
         if let pid = pidData, !pid.isEmpty {

@@ -8,7 +8,7 @@ class SDKConfig {
   static const String demoAuthUrl = 'https://examify.co.in/api/demoauth';
   
   // API tokens
-  static const String apiToken = '7alckyg32jzlmb2i2rwf4itdhna2bzb2';
+  static const String apiToken = '54weht0yfk0zzif3ihdee843tkrnopm3';
   static const String demoAuthToken = 'f7aa24903a5e4ce59dc5c7e87dd5be4e';
   
   SDKConfig({
